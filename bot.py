@@ -18,6 +18,37 @@ ADMIN_ID = 6374498816
 DATA_FILE = 'productos.json'
 CLIENTES_FILE = 'clientes.json'
 
+@bot.message_handler(commands=['limpiar'])
+def admin_limpiar_deuda(message):
+  if message.from_user.id != ADMIN_ID:
+    return
+
+  try:
+    # Se usa escribiendo: /limpiar ID_DEL_CLIENTE
+    chat_id_cliente = message.text.replace('/limpiar', '').strip()
+
+    clientes = cargar_datos(CLIENTES_FILE, {})
+
+    if chat_id_cliente in clientes:
+      clientes[chat_id_cliente]['deuda_total'] = 0.0
+      guardar_datos(CLIENTES_FILE, clientes)
+      
+      nombre_cli = clientes[chat_id_cliente]['nombre']
+      bot.reply_to(
+          message,
+          f"✅ Deuda saldada con éxito para el cliente: **{nombre_cli}** (ID: `{chat_id_cliente}`). Su saldo ahora es de $0.00",
+          parse_mode='Markdown',
+      )
+    else:
+      bot.reply_to(message, "❌ No se encontró ningún cliente con ese ID. Usa el comando /clientes para revisar la lista.")
+  except Exception as e:
+    bot.reply_to(
+        message,
+        "❌ Formato incorrecto. Usa el formato:\n`/limpiar ID_DEL_CLIENTE`",
+        parse_mode='Markdown',
+    )
+
+
 
 # Funciones para cargar y guardar datos
 def cargar_datos(archivo, defecto):

@@ -401,3 +401,36 @@ if __name__ == '__main__':
   bot.remove_webhook()
   bot.set_webhook(url=f'https://nombre-de-tu-app-tienda.onrender.com/{TOKEN}')
   app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+
+
+@bot.message_handler(commands=['limpiar'])
+def admin_limpiar_deuda(message):
+  if message.from_user.id != ADMIN_ID:
+    return
+
+  try:
+    chat_id_cliente = message.text.replace('/limpiar', '').strip()
+    clientes = cargar_datos(CLIENTES_FILE, {})
+
+    if chat_id_cliente in clientes:
+      clientes[chat_id_cliente]['deuda_total'] = 0.0
+      guardar_datos(CLIENTES_FILE, clientes)
+
+      nombre_cli = clientes[chat_id_cliente]['nombre']
+      bot.reply_to(
+          message,
+          f'✅ Deuda saldada con éxito para el cliente: **{nombre_cli}** (ID: `{chat_id_cliente}`). Su saldo ahora es de $0.00',
+          parse_mode='Markdown',
+      )
+    else:
+      bot.reply_to(
+          message,
+          '❌ No se encontró ningún cliente con ese ID. Usa el comando /clientes para revisar la lista.',
+      )
+  except Exception as e:
+    bot.reply_to(
+        message,
+        '❌ Formato incorrecto. Usa el formato:\n`/limpiar ID_DEL_CLIENTE`',
+        parse_mode='Markdown',
+    )
+

@@ -10,44 +10,12 @@ bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
 # --- CONFIGURACIÓN DE ADMINISTRADOR ---
-# Reemplaza este número con tu ID real de Telegram (búscalo con @userinfobot)
-# para que las alertas de pedidos te lleguen a ti durante las pruebas.
-ADMIN_ID = 6374498816
+# Reemplaza este número con tu ID real de Telegram para las alertas.
+ADMIN_ID = 6374498816  # Tu ID detectado en las pruebas anteriores
 
 # Archivos locales para guardar datos de forma persistente
 DATA_FILE = 'productos.json'
 CLIENTES_FILE = 'clientes.json'
-
-@bot.message_handler(commands=['limpiar'])
-def admin_limpiar_deuda(message):
-  if message.from_user.id != ADMIN_ID:
-    return
-
-  try:
-    # Se usa escribiendo: /limpiar ID_DEL_CLIENTE
-    chat_id_cliente = message.text.replace('/limpiar', '').strip()
-
-    clientes = cargar_datos(CLIENTES_FILE, {})
-
-    if chat_id_cliente in clientes:
-      clientes[chat_id_cliente]['deuda_total'] = 0.0
-      guardar_datos(CLIENTES_FILE, clientes)
-      
-      nombre_cli = clientes[chat_id_cliente]['nombre']
-      bot.reply_to(
-          message,
-          f"✅ Deuda saldada con éxito para el cliente: **{nombre_cli}** (ID: `{chat_id_cliente}`). Su saldo ahora es de $0.00",
-          parse_mode='Markdown',
-      )
-    else:
-      bot.reply_to(message, "❌ No se encontró ningún cliente con ese ID. Usa el comando /clientes para revisar la lista.")
-  except Exception as e:
-    bot.reply_to(
-        message,
-        "❌ Formato incorrecto. Usa el formato:\n`/limpiar ID_DEL_CLIENTE`",
-        parse_mode='Markdown',
-    )
-
 
 
 # Funciones para cargar y guardar datos
@@ -67,6 +35,21 @@ def guardar_datos(archivo, datos):
 sesiones_usuarios = {}
 
 
+# --- TECLADO DE ACCESO RÁPIDO PARA CLIENTES ---
+def mostrar_teclado_principal(chat_id):
+  markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+  btn_catalogo = types.KeyboardButton('📚 Ver Catálogo')
+  btn_carrito = types.KeyboardButton('🛒 Ver mi Pedido')
+  btn_ayuda = types.KeyboardButton('❓ Ayuda / Contacto')
+  markup.add(btn_catalogo, btn_carrito, btn_ayuda)
+
+  bot.send_message(
+      chat_id,
+      '👇 Usa los botones de abajo para navegar rápidamente por la tienda:',
+      reply_markup=markup,
+  )
+
+
 # --- COMANDO /START Y REGISTRO DE CLIENTES ---
 @bot.message_handler(commands=['start'])
 def enviar_bienvenida(message):
@@ -79,7 +62,12 @@ def enviar_bienvenida(message):
   if chat_id in clientes:
     nombre = clientes[chat_id]['nombre']
     sesiones_usuarios[chat_id]['nombre'] = nombre
-    mostrar_menu_principal(message.chat.id, nombre)
+    bot.send_message(
+        message.chat.id,
+        f'¡Hola de nuevo, **{nombre}**! 🛍️',
+        parse_mode='Markdown',
+    )
+    mostrar_teclado_principal(message.chat.id)
   else:
     sesiones_usuarios[chat_id]['esperando_nombre'] = True
     bot.send_message(
@@ -118,25 +106,63 @@ def guardar_nombre_cliente(message):
   bot.reply_to(
       message, f'¡Mucho gusto, **{nombre_ingresado}**! 🎉 Registro exitoso.'
   )
-  mostrar_menu_principal(message.chat.id, nombre_ingresado)
+  mostrar_teclado_principal(message.chat.id)
 
 
-def mostrar_menu_principal(chat_id, nombre):
-  markup = types.InlineKeyboardMarkup(row_width=1)
-  btn_catalogo = types.InlineKeyboardButton(
-      '📚 Ver Catálogo y Precios', callback_data='ver_catalogo'
-  )
-  btn_ver_carrito = types.InlineKeyboardButton(
-      '🛒 Ver mi Pedido Actual', callback_data='ver_carrito'
-  )
-  markup.add(btn_catalogo, btn_ver_carrito)
+# --- MANEJO DE BOTONES DEL TECLADO INFERIOR ---
+@bot.message_handler(
+    func=lambda message: message.text
+    in ['📚 Ver Catálogo', '🛒 Ver mi Pedido', '❓ Ayuda / Contacto']
+)
+def manejar_botones_teclado(message):
+  chat_id = str(message.chat.id)
+  texto = message.text
 
-  bot.send_message(
-      chat_id,
-      f'Hola, **{nombre}**. ¿Qué deseas hacer hoy?',
-      reply_markup=markup,
-      parse_mode='Markdown',
-  )
+  if texto == '📚 Ver Catálogo':
+    productos = cargar_datos(
+        DATA_FILE,
+        {
+            'producto_1': {'nombre': 'Producto Ejemplo', 'precio': 5.0},
+        },
+    )
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for prod_id, info in productos.items():
+      markup.add(
+          types.InlineKeyboardButton(
+              f"➕ {info['nombre']} - ${info['precio']}",
+              callback_data=f'add_{prod_id}',
+          )
+      )
+    markup.add(
+        types.InlineKeyboardButton(
+            '🛒 Ver Carrito y Total', callback_data='ver_carrito'
+        )
+    )
+    bot.send_message(
+        message.chat.id,
+        '📦 **Catálogo Disponible:**\nToca un producto para sumarlo:',
+        reply_markup=markup,
+        parse_mode='Markdown',
+    )
+
+  elif texto == '🛒 Ver mi Pedido':
+    if chat_id not in sesiones_usuarios or not sesiones_usuarios[chat_id].get(
+        'carrito'
+    ):
+      bot.send_message(message.chat.id, '🛒 Tu carrito está vacío actualmente.')
+      return
+    bot.send_message(
+        message.chat.id,
+        'Revisa tus productos seleccionados abriendo el carrito desde el'
+        ' catálogo.',
+    )
+
+  elif texto == '❓ Ayuda / Contacto':
+    bot.send_message(
+        message.chat.id,
+        '📞 Si tienes dudas con tu pedido o pago, comunícate directamente con'
+        ' el administrador de la tienda.',
+    )
 
 
 # --- COMANDOS DE ADMINISTRADOR ---
@@ -158,6 +184,40 @@ def admin_ver_clientes(message):
     )
 
   bot.reply_to(message, texto, parse_mode='Markdown')
+
+
+@bot.message_handler(commands=['limpiar'])
+def admin_limpiar_deuda(message):
+  if message.from_user.id != ADMIN_ID:
+    return
+
+  try:
+    chat_id_cliente = message.text.replace('/limpiar', '').strip()
+    clientes = cargar_datos(CLIENTES_FILE, {})
+
+    if chat_id_cliente in clientes:
+      clientes[chat_id_cliente]['deuda_total'] = 0.0
+      guardar_datos(CLIENTES_FILE, clientes)
+
+      nombre_cli = clientes[chat_id_cliente]['nombre']
+      bot.reply_to(
+          message,
+          f'✅ Deuda saldada con éxito para el cliente: **{nombre_cli}** (ID:'
+          f' `{chat_id_cliente}`). Su saldo ahora es de $0.00',
+          parse_mode='Markdown',
+      )
+    else:
+      bot.reply_to(
+          message,
+          '❌ No se encontró ningún cliente con ese ID. Usa el comando'
+          ' /clientes para revisar la lista.',
+      )
+  except Exception as e:
+    bot.reply_to(
+        message,
+        '❌ Formato incorrecto. Usa el formato:\n`/limpiar ID_DEL_CLIENTE`',
+        parse_mode='Markdown',
+    )
 
 
 @bot.message_handler(commands=['agregar'])
@@ -202,7 +262,7 @@ def admin_listar_productos(message):
   )
   texto = '📋 **Catálogo Interno (Productos):**\n\n'
   for p_id, info in productos.items():
-    texto += f"- `id: {p_id}` -> {info['nombre']} (${info['precio']})\n"
+    texto += f'- `id: {p_id}` -> {info['nombre']} (${info['precio']})\n'
   bot.reply_to(message, texto, parse_mode='Markdown')
 
 
@@ -399,38 +459,7 @@ def index():
 
 if __name__ == '__main__':
   bot.remove_webhook()
-  bot.set_webhook(url=f'https://nombre-de-tu-app-tienda.onrender.com/{TOKEN}')
+  bot.set_webhook(
+      url=f'https://tienda-online-2kqw.onrender.com/{TOKEN}'
+  )
   app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
-
-
-@bot.message_handler(commands=['limpiar'])
-def admin_limpiar_deuda(message):
-  if message.from_user.id != ADMIN_ID:
-    return
-
-  try:
-    chat_id_cliente = message.text.replace('/limpiar', '').strip()
-    clientes = cargar_datos(CLIENTES_FILE, {})
-
-    if chat_id_cliente in clientes:
-      clientes[chat_id_cliente]['deuda_total'] = 0.0
-      guardar_datos(CLIENTES_FILE, clientes)
-
-      nombre_cli = clientes[chat_id_cliente]['nombre']
-      bot.reply_to(
-          message,
-          f'✅ Deuda saldada con éxito para el cliente: **{nombre_cli}** (ID: `{chat_id_cliente}`). Su saldo ahora es de $0.00',
-          parse_mode='Markdown',
-      )
-    else:
-      bot.reply_to(
-          message,
-          '❌ No se encontró ningún cliente con ese ID. Usa el comando /clientes para revisar la lista.',
-      )
-  except Exception as e:
-    bot.reply_to(
-        message,
-        '❌ Formato incorrecto. Usa el formato:\n`/limpiar ID_DEL_CLIENTE`',
-        parse_mode='Markdown',
-    )
-

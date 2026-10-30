@@ -47,17 +47,14 @@ def obtener_tasa_bcv():
 
 # --- FUNCIÓN PARA GENERAR LA IMAGEN DEL RECIBO (TICKET) ---
 def generar_imagen_recibo(nombre_cliente, carrito, productos, tasa_bcv):
-    # Definimos el tamaño base del ticket (ancho x alto dinámico según los productos)
     ancho = 500
     alto_base = 220
     altura_por_producto = 30
     alto_total = alto_base + (len(carrito) * altura_por_producto)
 
-    # Crear imagen con fondo blanco estilo recibo
     img = Image.new('RGB', (ancho, alto_total), color=(255, 255, 255))
     draw = ImageDraw.Draw(img)
 
-    # Intentar cargar una fuente estándar, si no usa la predeterminada del sistema
     try:
         font_titulo = ImageFont.truetype("arial.ttf", 20)
         font_texto = ImageFont.truetype("arial.ttf", 14)
@@ -67,7 +64,6 @@ def generar_imagen_recibo(nombre_cliente, carrito, productos, tasa_bcv):
         font_texto = ImageFont.load_default()
         font_negrita = ImageFont.load_default()
 
-    # Dibujar cabecera del recibo
     draw.text((155, 20), "🛒 TICKET DE COMPRA", fill=(0, 0, 0), font=font_titulo)
     draw.text((40, 50), "--------------------------------------------------------------------------------", fill=(150, 150, 150))
     
@@ -76,12 +72,10 @@ def generar_imagen_recibo(nombre_cliente, carrito, productos, tasa_bcv):
     draw.text((30, 95), f"Cliente: {nombre_cliente}", fill=(50, 50, 50), font=font_texto)
     draw.text((40, 115), "--------------------------------------------------------------------------------", fill=(150, 150, 150))
 
-    # Cabeceras de la tabla
     draw.text((30, 135), "Cant / Producto", fill=(0, 0, 0), font=font_negrita)
     draw.text((370, 135), "Subtotal", fill=(0, 0, 0), font=font_negrita)
     draw.text((40, 150), "--------------------------------------------------------------------------------", fill=(150, 150, 150))
 
-    # Conteo de productos del carrito
     conteo = {}
     for prod_id in carrito:
         conteo[prod_id] = conteo.get(prod_id, 0) + 1
@@ -105,11 +99,9 @@ def generar_imagen_recibo(nombre_cliente, carrito, productos, tasa_bcv):
 
     total_bolivares = total_dolares * tasa_bcv
 
-    # Línea divisoria de totales
     draw.text((40, y + 5), "--------------------------------------------------------------------------------", fill=(150, 150, 150))
     y += 25
 
-    # Totales
     draw.text((30, y), f"Tasa BCV: {tasa_bcv} Bs/$", fill=(100, 100, 100), font=font_texto)
     y += 20
     draw.text((30, y), f"TOTAL USD:", fill=(0, 0, 0), font=font_negrita)
@@ -118,11 +110,9 @@ def generar_imagen_recibo(nombre_cliente, carrito, productos, tasa_bcv):
     draw.text((30, y), f"TOTAL BS:", fill=(0, 0, 0), font=font_negrita)
     draw.text((350, y), f"{total_bolivares:,.2f} Bs", fill=(0, 0, 0), font=font_negrita)
     
-    # Pie de página
     y += 40
     draw.text((130, y), "¡Gracias por su compra!", fill=(100, 100, 100), font=font_texto)
 
-    # Guardar en memoria BytesIO para enviarlo por Telegram sin ocupar disco duro
     bio = io.BytesIO()
     img.save(bio, 'JPEG')
     bio.seek(0)
@@ -156,7 +146,7 @@ def mostrar_teclado_admin(chat_id):
 
   bot.send_message(
       chat_id,
-      f'🔓 **Panel Admin Activo**\n💱 Tasa BCV en línea: `{tasa_actual} Bs/$`\n\nSelecciona una opción o escribe `/agregar Nombre | Precio` y `/limpiar ID`:',
+      f'🔓 **Panel Admin Activo**\n💱 Tasa BCV en línea: `{tasa_actual} Bs/$`\n\nUsa `/agregar Nombre | PrecioEnBolivares`:',
       reply_markup=markup,
       parse_mode='Markdown'
   )
@@ -315,14 +305,23 @@ def admin_agregar_producto(message):
     return
   try:
     texto = message.text.replace('/agregar', '').strip()
-    nombre, precio = texto.split('|')
+    nombre, precio_bs_ingresado = texto.split('|')
+    
+    tasa_bcv = obtener_tasa_bcv()
+    precio_bs = float(precio_bs_ingresado.strip())
+    
+    # 💱 Convertimos los bolívares ingresados a dólares automáticamente para guardarlos
+    precio_dolares = precio_bs / tasa_bcv
+
     productos = cargar_datos(DATA_FILE, {'producto_1': {'nombre': 'Producto Ejemplo', 'precio': 5.0}})
     p_id = nombre.strip().lower().replace(' ', '_')
-    productos[p_id] = {'nombre': nombre.strip(), 'precio': float(precio.strip())}
+    
+    productos[p_id] = {'nombre': nombre.strip(), 'precio': round(precio_dolares, 2)}
     guardar_datos(DATA_FILE, productos)
-    bot.reply_to(message, f'✅ Producto agregado:\n📦 {nombre.strip()} - ${precio.strip()} USD')
+    
+    bot.reply_to(message, f'✅ Producto agregado en Bolívares:\n📦 {nombre.strip()} - {precio_bs:,.2f} Bs (~${precio_dolares:.2f} USD)')
   except Exception:
-    bot.reply_to(message, '❌ Usa el formato:\n`/agregar Nombre | 5.0`', parse_mode='Markdown')
+    bot.reply_to(message, '❌ Usa el formato en Bolívares:\n`/agregar Harina | 150.0`', parse_mode='Markdown')
 
 
 # --- GESTIÓN DE BOTONES (CARRITO Y RECIBO) ---
@@ -410,24 +409,18 @@ def manejar_botones(call):
     clientes = cargar_datos(CLIENTES_FILE, {})
     nombre_cliente = clientes.get(chat_id, {}).get('nombre', 'Cliente')
 
-    # Generar la imagen del recibo
     imagen_bio, total_dolares, total_bolivares = generar_imagen_recibo(nombre_cliente, carrito, productos, tasa_bcv)
 
-    # Registrar deuda en el archivo JSON
     if chat_id in clientes:
       clientes[chat_id]['deuda_total'] += total_dolares
       guardar_datos(CLIENTES_FILE, clientes)
 
-    # Enviar la imagen del recibo al cliente
     bot.send_message(chat_id, '🎉 **¡Pedido confirmado con éxito!** Aquí tienes el comprobante de tu compra:')
     bot.send_photo(chat_id, imagen_bio, caption=f"💵 Total: **${total_dolares:.2f} USD** / **{total_bolivares:,.2f} Bs**")
 
-    # Enviar alerta con la imagen del recibo a los administradores
     for admin_id_num in ADMINS_AUTORIZADOS.keys():
       deuda_cli_d = clientes.get(chat_id, {}).get('deuda_total', 0.0)
       deuda_cli_b = deuda_cli_d * tasa_bcv
-      
-      # Rebobinamos el archivo de imagen para poder reenviarlo al admin
       imagen_bio.seek(0)
       
       try:

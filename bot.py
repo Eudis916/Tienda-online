@@ -1,18 +1,21 @@
 import json
 import os
+import io
+import datetime
+import requests
 from flask import Flask, request
 import telebot
 from telebot import types
+from PIL import Image, ImageDraw, ImageFont
 
 # --- TOKEN EXCLUSIVO DE LA TIENDA ---
 TOKEN = '9087964567:AAFvgiOhYZeV_5oMjK7FQCtdTnPxQfntHHs'
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
-# --- CONFIGURACIÓN DE ADMINISTRADORES Y SEGURIDAD ---
-# Puedes agregar más administradores en el futuro escribiendo su ID de Telegram y contraseña aquí
+# --- CONFIGURACIÓN DE ADMINISTRADORES ---
 ADMINS_AUTORIZADOS = {
-    6374498816: {"nombre": "Moisés", "clave": "2010"}
+    6374498816: {"nombre": "Eudis", "clave": "1234"}
 }
 
 # Archivos locales para guardar datos de forma persistente
@@ -31,6 +34,101 @@ def guardar_datos(archivo, datos):
 
 sesiones_usuarios = {}
 
+# --- FUNCIÓN PARA CONSULTAR LA TASA EN LÍNEA ---
+def obtener_tasa_bcv():
+  try:
+    respuesta = requests.get("https://pydolarve.org/api/v1/dollar?monitor=bcv", timeout=5)
+    if respuesta.status_code == 200:
+      datos = respuesta.json()
+      return float(datos.get("price", 36.5))
+  except Exception as e:
+    print(f"Error al consultar la tasa en línea: {e}")
+  return 36.5
+
+# --- FUNCIÓN PARA GENERAR LA IMAGEN DEL RECIBO (TICKET) ---
+def generar_imagen_recibo(nombre_cliente, carrito, productos, tasa_bcv):
+    # Definimos el tamaño base del ticket (ancho x alto dinámico según los productos)
+    ancho = 500
+    alto_base = 220
+    altura_por_producto = 30
+    alto_total = alto_base + (len(carrito) * altura_por_producto)
+
+    # Crear imagen con fondo blanco estilo recibo
+    img = Image.new('RGB', (ancho, alto_total), color=(255, 255, 255))
+    draw = ImageDraw.Draw(img)
+
+    # Intentar cargar una fuente estándar, si no usa la predeterminada del sistema
+    try:
+        font_titulo = ImageFont.truetype("arial.ttf", 20)
+        font_texto = ImageFont.truetype("arial.ttf", 14)
+        font_negrita = ImageFont.truetype("arial.ttf", 14)
+    except:
+        font_titulo = ImageFont.load_default()
+        font_texto = ImageFont.load_default()
+        font_negrita = ImageFont.load_default()
+
+    # Dibujar cabecera del recibo
+    draw.text((155, 20), "🛒 TICKET DE COMPRA", fill=(0, 0, 0), font=font_titulo)
+    draw.text((40, 50), "--------------------------------------------------------------------------------", fill=(150, 150, 150))
+    
+    fecha_actual = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+    draw.text((30, 70), f"Fecha: {fecha_actual}", fill=(50, 50, 50), font=font_texto)
+    draw.text((30, 95), f"Cliente: {nombre_cliente}", fill=(50, 50, 50), font=font_texto)
+    draw.text((40, 115), "--------------------------------------------------------------------------------", fill=(150, 150, 150))
+
+    # Cabeceras de la tabla
+    draw.text((30, 135), "Cant / Producto", fill=(0, 0, 0), font=font_negrita)
+    draw.text((370, 135), "Subtotal", fill=(0, 0, 0), font=font_negrita)
+    draw.text((40, 150), "--------------------------------------------------------------------------------", fill=(150, 150, 150))
+
+    # Conteo de productos del carrito
+    conteo = {}
+    for prod_id in carrito:
+        conteo[prod_id] = conteo.get(prod_id, 0) + 1
+
+    y = 170
+    total_dolares = 0.0
+
+    for prod_id, cant in conteo.items():
+        if prod_id in productos:
+            nom = productos[prod_id]['nombre']
+            precio_d = productos[prod_id]['precio']
+            sub_d = precio_d * cant
+            total_dolares += sub_d
+
+            texto_item = f"{cant}x {nom}"
+            texto_sub = f"${sub_d:.2f}"
+            
+            draw.text((30, y), texto_item, fill=(30, 30, 30), font=font_texto)
+            draw.text((370, y), texto_sub, fill=(30, 30, 30), font=font_texto)
+            y += altura_por_producto
+
+    total_bolivares = total_dolares * tasa_bcv
+
+    # Línea divisoria de totales
+    draw.text((40, y + 5), "--------------------------------------------------------------------------------", fill=(150, 150, 150))
+    y += 25
+
+    # Totales
+    draw.text((30, y), f"Tasa BCV: {tasa_bcv} Bs/$", fill=(100, 100, 100), font=font_texto)
+    y += 20
+    draw.text((30, y), f"TOTAL USD:", fill=(0, 0, 0), font=font_negrita)
+    draw.text((370, y), f"${total_dolares:.2f}", fill=(0, 0, 0), font=font_negrita)
+    y += 20
+    draw.text((30, y), f"TOTAL BS:", fill=(0, 0, 0), font=font_negrita)
+    draw.text((350, y), f"{total_bolivares:,.2f} Bs", fill=(0, 0, 0), font=font_negrita)
+    
+    # Pie de página
+    y += 40
+    draw.text((130, y), "¡Gracias por su compra!", fill=(100, 100, 100), font=font_texto)
+
+    # Guardar en memoria BytesIO para enviarlo por Telegram sin ocupar disco duro
+    bio = io.BytesIO()
+    img.save(bio, 'JPEG')
+    bio.seek(0)
+    return bio, total_dolares, total_bolivares
+
+
 # --- TECLADO PRINCIPAL PARA CLIENTES ---
 def mostrar_teclado_principal(chat_id):
   markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
@@ -47,8 +145,9 @@ def mostrar_teclado_principal(chat_id):
       parse_mode='Markdown'
   )
 
-# --- TECLADO DE ADMINISTRADOR (SECRETO) ---
+# --- TECLADO DE ADMINISTRADOR ---
 def mostrar_teclado_admin(chat_id):
+  tasa_actual = obtener_tasa_bcv()
   markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
   btn_clientes = types.KeyboardButton('👥 Ver Clientes y Deudas')
   btn_listar = types.KeyboardButton('📋 Listar Productos')
@@ -57,7 +156,7 @@ def mostrar_teclado_admin(chat_id):
 
   bot.send_message(
       chat_id,
-      '🔓 **¡Acceso concedido al Panel de Administrador!**\nSelecciona una opción o escribe `/agregar Nombre | Precio` y `/limpiar ID`:',
+      f'🔓 **Panel Admin Activo**\n💱 Tasa BCV en línea: `{tasa_actual} Bs/$`\n\nSelecciona una opción o escribe `/agregar Nombre | Precio` y `/limpiar ID`:',
       reply_markup=markup,
       parse_mode='Markdown'
   )
@@ -86,7 +185,7 @@ def enviar_bienvenida(message):
         parse_mode='Markdown',
     )
 
-# --- CONTROL DE TEXTO, REGISTROS Y CLAVE ADMIN ---
+# --- CONTROL DE TEXTO Y MENÚS ---
 @bot.message_handler(func=lambda m: not m.text.startswith('/'))
 def manejar_textos_generales(message):
   chat_id = str(message.chat.id)
@@ -95,7 +194,6 @@ def manejar_textos_generales(message):
   if chat_id not in sesiones_usuarios:
     sesiones_usuarios[chat_id] = {}
 
-  # 1. Si está esperando el nombre de registro
   if sesiones_usuarios[chat_id].get('esperando_nombre', False):
     nombre_ingresado = message.text.strip()
     if len(nombre_ingresado) < 2:
@@ -118,7 +216,6 @@ def manejar_textos_generales(message):
     mostrar_teclado_principal(message.chat.id)
     return
 
-  # 2. Si está ingresando la clave de Administrador (Doble seguridad: ID + Contraseña)
   if sesiones_usuarios[chat_id].get('esperando_clave', False):
     clave_ingresada = message.text.strip()
     sesiones_usuarios[chat_id]['esperando_clave'] = False
@@ -127,19 +224,23 @@ def manejar_textos_generales(message):
       sesiones_usuarios[chat_id]['es_admin'] = True
       mostrar_teclado_admin(chat_id)
     else:
-      bot.reply_to(message, '❌ Acceso denegado. No estás autorizado o la clave es incorrecta.')
+      bot.reply_to(message, '❌ Acceso denegado. Clave incorrecta.')
       mostrar_teclado_principal(message.chat.id)
     return
 
-  # 3. Manejo de botones del menú de clientes o admin
   texto = message.text
   if texto == '📚 Ver Catálogo':
+    tasa_bcv = obtener_tasa_bcv()
     productos = cargar_datos(DATA_FILE, {'producto_1': {'nombre': 'Producto Ejemplo', 'precio': 5.0}})
     markup = types.InlineKeyboardMarkup(row_width=1)
     for prod_id, info in productos.items():
-      markup.add(types.InlineKeyboardButton(f"➕ {info['nombre']} - ${info['precio']}", callback_data=f'add_{prod_id}'))
+      precio_dolar = info['precio']
+      precio_bs = precio_dolar * tasa_bcv
+      texto_boton = f"➕ {info['nombre']} — ${precio_dolar:.2f} ({precio_bs:,.2f} Bs)"
+      markup.add(types.InlineKeyboardButton(texto_boton, callback_data=f'add_{prod_id}'))
     markup.add(types.InlineKeyboardButton('🛒 Ver Carrito y Total', callback_data='ver_carrito'))
-    bot.send_message(message.chat.id, '📦 **Catálogo Disponible:**\nToca un producto para sumarlo:', reply_markup=markup, parse_mode='Markdown')
+    
+    bot.send_message(message.chat.id, f"📦 **Catálogo Disponible** (Tasa en línea: {tasa_bcv} Bs/$):\nToca un producto para sumarlo:", reply_markup=markup, parse_mode='Markdown')
 
   elif texto == '🛒 Ver mi Pedido':
     if chat_id not in sesiones_usuarios or not sesiones_usuarios[chat_id].get('carrito'):
@@ -165,26 +266,32 @@ def manejar_textos_generales(message):
   elif texto == '👥 Ver Clientes y Deudas':
     if not sesiones_usuarios[chat_id].get('es_admin', False) or user_id not in ADMINS_AUTORIZADOS:
       return
+    tasa_bcv = obtener_tasa_bcv()
     clientes = cargar_datos(CLIENTES_FILE, {})
     if not clientes:
       bot.reply_to(message, 'No hay clientes registrados todavía.')
       return
-    texto_cli = '👥 **Lista de Clientes y Deudas Activas:**\n\n'
+    texto_cli = f'👥 **Lista de Clientes y Deudas** (Tasa: {tasa_bcv} Bs/$):\n\n'
     for c_id, info in clientes.items():
-      texto_cli += f"👤 **{info['nombre']}**\n   ID: `{c_id}`\n   💰 Deuda: **${info['deuda_total']:.2f}**\n\n"
+      deuda_d = info['deuda_total']
+      deuda_b = deuda_d * tasa_bcv
+      texto_cli += f"👤 **{info['nombre']}**\n   ID: `{c_id}`\n   💰 Deuda: **${deuda_d:.2f}** *({deuda_b:,.2f} Bs)*\n\n"
     bot.reply_to(message, texto_cli, parse_mode='Markdown')
 
   elif texto == '📋 Listar Productos':
     if not sesiones_usuarios[chat_id].get('es_admin', False) or user_id not in ADMINS_AUTORIZADOS:
       return
+    tasa_bcv = obtener_tasa_bcv()
     productos = cargar_datos(DATA_FILE, {'producto_1': {'nombre': 'Producto Ejemplo', 'precio': 5.0}})
-    texto_prod = '📋 **Catálogo Interno (Productos):**\n\n'
+    texto_prod = f'📋 **Catálogo Interno** (Tasa: {tasa_bcv} Bs/$):\n\n'
     for p_id, info in productos.items():
-      texto_prod += f"- `id: {p_id}` -> {info['nombre']} (${info['precio']})\n"
+      p_d = info['precio']
+      p_b = p_d * tasa_bcv
+      texto_prod += f"- `id: {p_id}` -> {info['nombre']} (${p_d:.2f} / {p_b:,.2f} Bs)\n"
     bot.reply_to(message, texto_prod, parse_mode='Markdown')
 
 
-# --- COMANDOS DE ADMINISTRADOR POR TEXTO ---
+# --- COMANDOS ADMINISTRADOR ---
 @bot.message_handler(commands=['limpiar'])
 def admin_limpiar_deuda(message):
   if message.from_user.id not in ADMINS_AUTORIZADOS:
@@ -213,15 +320,16 @@ def admin_agregar_producto(message):
     p_id = nombre.strip().lower().replace(' ', '_')
     productos[p_id] = {'nombre': nombre.strip(), 'precio': float(precio.strip())}
     guardar_datos(DATA_FILE, productos)
-    bot.reply_to(message, f'✅ Producto agregado:\n📦 {nombre.strip()} - ${precio.strip()}')
+    bot.reply_to(message, f'✅ Producto agregado:\n📦 {nombre.strip()} - ${precio.strip()} USD')
   except Exception:
     bot.reply_to(message, '❌ Usa el formato:\n`/agregar Nombre | 5.0`', parse_mode='Markdown')
 
 
-# --- GESTIÓN DE BOTONES INTERNOS (CARRITO Y CATÁLOGO) ---
+# --- GESTIÓN DE BOTONES (CARRITO Y RECIBO) ---
 @bot.callback_query_handler(func=lambda call: True)
 def manejar_botones(call):
   chat_id = str(call.message.chat.id)
+  tasa_bcv = obtener_tasa_bcv()
   productos = cargar_datos(DATA_FILE, {'producto_1': {'nombre': 'Producto Ejemplo', 'precio': 5.0}})
 
   if chat_id not in sesiones_usuarios:
@@ -232,9 +340,11 @@ def manejar_botones(call):
   if call.data == 'ver_catalogo':
     markup = types.InlineKeyboardMarkup(row_width=1)
     for prod_id, info in productos.items():
-      markup.add(types.InlineKeyboardButton(f"➕ {info['nombre']} - ${info['precio']}", callback_data=f'add_{prod_id}'))
+      p_d = info['precio']
+      p_b = p_d * tasa_bcv
+      markup.add(types.InlineKeyboardButton(f"➕ {info['nombre']} — ${p_d:.2f} ({p_b:,.2f} Bs)", callback_data=f'add_{prod_id}'))
     markup.add(types.InlineKeyboardButton('🛒 Ver Carrito y Total', callback_data='ver_carrito'))
-    bot.edit_message_text('📦 **Catálogo Disponible:**\nToca un producto para sumarlo:', chat_id, call.message.message_id, reply_markup=markup, parse_mode='Markdown')
+    bot.edit_message_text(f'📦 **Catálogo Disponible** (Tasa en línea: {tasa_bcv} Bs/$):\nToca un producto para sumarlo:', chat_id, call.message.message_id, reply_markup=markup, parse_mode='Markdown')
 
   elif call.data.startswith('add_'):
     prod_id = call.data.split('_', 1)[1]
@@ -245,7 +355,9 @@ def manejar_botones(call):
       
       markup = types.InlineKeyboardMarkup(row_width=1)
       for p_id, info in productos.items():
-        markup.add(types.InlineKeyboardButton(f"➕ {info['nombre']} - ${info['precio']}", callback_data=f'add_{p_id}'))
+        p_d = info['precio']
+        p_b = p_d * tasa_bcv
+        markup.add(types.InlineKeyboardButton(f"➕ {info['nombre']} — ${p_d:.2f} ({p_b:,.2f} Bs)", callback_data=f'add_{p_id}'))
       markup.add(types.InlineKeyboardButton('🛒 Ver Carrito y Total', callback_data='ver_carrito'))
       bot.edit_message_text(f'✅ **{nombre_prod}** agregado.\n¿Deseas algo más?', chat_id, call.message.message_id, reply_markup=markup, parse_mode='Markdown')
 
@@ -261,20 +373,23 @@ def manejar_botones(call):
     for prod_id in carrito:
       conteo[prod_id] = conteo.get(prod_id, 0) + 1
 
-    resumen = '🛒 **Tu Pedido Actual:**\n\n'
-    total = 0.0
+    resumen = f'🛒 **Tu Pedido Actual** (Tasa: {tasa_bcv} Bs/$):\n\n'
+    total_dolares = 0.0
     for prod_id, cant in conteo.items():
       if prod_id in productos:
         nom = productos[prod_id]['nombre']
-        precio = productos[prod_id]['precio']
-        sub = precio * cant
-        total += sub
-        resumen += f'- {cant}x {nom} (${precio} c/u) = ${sub:.2f}\n'
+        precio_d = productos[prod_id]['precio']
+        sub_d = precio_d * cant
+        sub_b = sub_d * tasa_bcv
+        total_dolares += sub_d
+        resumen += f'- {cant}x {nom} (${precio_d:.2f} c/u) = **${sub_d:.2f}** *({sub_b:,.2f} Bs)*\n'
 
-    resumen += f'\n💰 **Monto Total: ${total:.2f}**'
+    total_bolivares = total_dolares * tasa_bcv
+    resumen += f'\n💰 **Total USD: ${total_dolares:.2f}**\n🇻🇪 **Total Bolívares: {total_bolivares:,.2f} Bs**'
+    
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
-        types.InlineKeyboardButton('✅ Confirmar Pedido', callback_data='confirmar_pedido'),
+        types.InlineKeyboardButton('✅ Confirmar Pedido y Generar Recibo', callback_data='confirmar_pedido'),
         types.InlineKeyboardButton('🗑️ Vaciar Carrito', callback_data='vaciar_carrito'),
         types.InlineKeyboardButton('➕ Agregar más', callback_data='ver_catalogo'),
     )
@@ -295,39 +410,38 @@ def manejar_botones(call):
     clientes = cargar_datos(CLIENTES_FILE, {})
     nombre_cliente = clientes.get(chat_id, {}).get('nombre', 'Cliente')
 
-    conteo = {}
-    for prod_id in carrito:
-      conteo[prod_id] = conteo.get(prod_id, 0) + 1
+    # Generar la imagen del recibo
+    imagen_bio, total_dolares, total_bolivares = generar_imagen_recibo(nombre_cliente, carrito, productos, tasa_bcv)
 
-    detalle = ''
-    total = 0.0
-    for prod_id, cant in conteo.items():
-      if prod_id in productos:
-        nom = productos[prod_id]['nombre']
-        sub = productos[prod_id]['precio'] * cant
-        total += sub
-        detalle += f'- {cant}x {nom} (${sub:.2f})\n'
-
+    # Registrar deuda en el archivo JSON
     if chat_id in clientes:
-      clientes[chat_id]['deuda_total'] += total
-      clientes[chat_id]['historial_compras'].append(detalle)
+      clientes[chat_id]['deuda_total'] += total_dolares
       guardar_datos(CLIENTES_FILE, clientes)
 
-    bot.edit_message_text(
-        '🎉 **¡Pedido registrado con éxito!**\n\nSe ha sumado a tu cuenta. Monto de este pedido: **'
-        f'${total:.2f}**\nPronto nos pondremos en contacto contigo.',
-        chat_id, call.message.message_id, parse_mode='Markdown'
-    )
+    # Enviar la imagen del recibo al cliente
+    bot.send_message(chat_id, '🎉 **¡Pedido confirmado con éxito!** Aquí tienes el comprobante de tu compra:')
+    bot.send_photo(chat_id, imagen_bio, caption=f"💵 Total: **${total_dolares:.2f} USD** / **{total_bolivares:,.2f} Bs**")
 
-    # Notificar a todos los administradores registrados
+    # Enviar alerta con la imagen del recibo a los administradores
     for admin_id_num in ADMINS_AUTORIZADOS.keys():
-      alerta = (
-          '🚨 **¡NUEVO PEDIDO DE TIENDA!** 🚨\n\n👤 Cliente: **'
-          f'{nombre_cliente}**\nID: `{chat_id}`\n\n{detalle}\n💰 Monto de esta orden: **${total:.2f}**\n📂 **Deuda Total Acumulada:** $'
-          f"{clientes.get(chat_id, {}).get('deuda_total', 0.0):.2f}"
-      )
+      deuda_cli_d = clientes.get(chat_id, {}).get('deuda_total', 0.0)
+      deuda_cli_b = deuda_cli_d * tasa_bcv
+      
+      # Rebobinamos el archivo de imagen para poder reenviarlo al admin
+      imagen_bio.seek(0)
+      
       try:
-        bot.send_message(admin_id_num, alerta, parse_mode='Markdown')
+        bot.send_photo(
+            admin_id_num,
+            imagen_bio,
+            caption=(
+                '🚨 **¡NUEVO PEDIDO RECIBIDO!** 🚨\n\n'
+                f'👤 Cliente: **{nombre_cliente}**\nID: `{chat_id}`\n\n'
+                f'💰 **Orden:** ${total_dolares:.2f} USD *({total_bolivares:,.2f} Bs)*\n'
+                f'📂 **Deuda Total Acumulada:** ${deuda_cli_d:.2f} *({deuda_cli_b:,.2f} Bs)*'
+            ),
+            parse_mode='Markdown'
+        )
       except Exception as e:
         print(f'Error al notificar admin {admin_id_num}: {e}')
 

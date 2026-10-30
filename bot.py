@@ -48,7 +48,7 @@ def obtener_tasa_bcv():
     print(f"Aviso: Usando tasa de respaldo por fallo de red: {e}")
   
   # 🛡️ Tasa de respaldo fija (puedes actualizar este número si alguna vez lo necesitas)
-  return 36.5
+  return 885.00
 
 # --- TECLADO PRINCIPAL PARA CLIENTES ---
 def mostrar_teclado_principal(chat_id):

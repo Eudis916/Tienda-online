@@ -1,12 +1,9 @@
 import json
 import os
-import io
-import datetime
 import requests
 from flask import Flask, request
 import telebot
 from telebot import types
-from PIL import Image, ImageDraw, ImageFont
 
 # --- TOKEN EXCLUSIVO DE LA TIENDA ---
 TOKEN = '9087964567:AAFvgiOhYZeV_5oMjK7FQCtdTnPxQfntHHs'
@@ -44,80 +41,6 @@ def obtener_tasa_bcv():
   except Exception as e:
     print(f"Error al consultar la tasa en línea: {e}")
   return 36.5
-
-# --- FUNCIÓN PARA GENERAR LA IMAGEN DEL RECIBO (TICKET) ---
-def generar_imagen_recibo(nombre_cliente, carrito, productos, tasa_bcv):
-    ancho = 500
-    alto_base = 220
-    altura_por_producto = 30
-    alto_total = alto_base + (len(carrito) * altura_por_producto)
-
-    img = Image.new('RGB', (ancho, alto_total), color=(255, 255, 255))
-    draw = ImageDraw.Draw(img)
-
-    try:
-        font_titulo = ImageFont.truetype("arial.ttf", 20)
-        font_texto = ImageFont.truetype("arial.ttf", 14)
-        font_negrita = ImageFont.truetype("arial.ttf", 14)
-    except:
-        font_titulo = ImageFont.load_default()
-        font_texto = ImageFont.load_default()
-        font_negrita = ImageFont.load_default()
-
-    draw.text((155, 20), "🛒 TICKET DE COMPRA", fill=(0, 0, 0), font=font_titulo)
-    draw.text((40, 50), "--------------------------------------------------------------------------------", fill=(150, 150, 150))
-    
-    fecha_actual = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
-    draw.text((30, 70), f"Fecha: {fecha_actual}", fill=(50, 50, 50), font=font_texto)
-    draw.text((30, 95), f"Cliente: {nombre_cliente}", fill=(50, 50, 50), font=font_texto)
-    draw.text((40, 115), "--------------------------------------------------------------------------------", fill=(150, 150, 150))
-
-    draw.text((30, 135), "Cant / Producto", fill=(0, 0, 0), font=font_negrita)
-    draw.text((370, 135), "Subtotal", fill=(0, 0, 0), font=font_negrita)
-    draw.text((40, 150), "--------------------------------------------------------------------------------", fill=(150, 150, 150))
-
-    conteo = {}
-    for prod_id in carrito:
-        conteo[prod_id] = conteo.get(prod_id, 0) + 1
-
-    y = 170
-    total_dolares = 0.0
-
-    for prod_id, cant in conteo.items():
-        if prod_id in productos:
-            nom = productos[prod_id]['nombre']
-            precio_d = productos[prod_id]['precio']
-            sub_d = precio_d * cant
-            total_dolares += sub_d
-
-            texto_item = f"{cant}x {nom}"
-            texto_sub = f"${sub_d:.2f}"
-            
-            draw.text((30, y), texto_item, fill=(30, 30, 30), font=font_texto)
-            draw.text((370, y), texto_sub, fill=(30, 30, 30), font=font_texto)
-            y += altura_por_producto
-
-    total_bolivares = total_dolares * tasa_bcv
-
-    draw.text((40, y + 5), "--------------------------------------------------------------------------------", fill=(150, 150, 150))
-    y += 25
-
-    draw.text((30, y), f"Tasa BCV: {tasa_bcv} Bs/$", fill=(100, 100, 100), font=font_texto)
-    y += 20
-    draw.text((30, y), f"TOTAL USD:", fill=(0, 0, 0), font=font_negrita)
-    draw.text((370, y), f"${total_dolares:.2f}", fill=(0, 0, 0), font=font_negrita)
-    y += 20
-    draw.text((30, y), f"TOTAL BS:", fill=(0, 0, 0), font=font_negrita)
-    draw.text((350, y), f"{total_bolivares:,.2f} Bs", fill=(0, 0, 0), font=font_negrita)
-    
-    y += 40
-    draw.text((130, y), "¡Gracias por su compra!", fill=(100, 100, 100), font=font_texto)
-
-    bio = io.BytesIO()
-    img.save(bio, 'JPEG')
-    bio.seek(0)
-    return bio, total_dolares, total_bolivares
-
 
 # --- TECLADO PRINCIPAL PARA CLIENTES ---
 def mostrar_teclado_principal(chat_id):
@@ -310,7 +233,7 @@ def admin_agregar_producto(message):
     tasa_bcv = obtener_tasa_bcv()
     precio_bs = float(precio_bs_ingresado.strip())
     
-    # 💱 Convertimos los bolívares ingresados a dólares automáticamente para guardarlos
+    # 💱 Convierte automáticamente los bolívares ingresados a dólares para guardarlos
     precio_dolares = precio_bs / tasa_bcv
 
     productos = cargar_datos(DATA_FILE, {'producto_1': {'nombre': 'Producto Ejemplo', 'precio': 5.0}})
@@ -321,10 +244,10 @@ def admin_agregar_producto(message):
     
     bot.reply_to(message, f'✅ Producto agregado en Bolívares:\n📦 {nombre.strip()} - {precio_bs:,.2f} Bs (~${precio_dolares:.2f} USD)')
   except Exception:
-    bot.reply_to(message, '❌ Usa el formato en Bolívares:\n`/agregar Harina | 150.0`', parse_mode='Markdown')
+    bot.reply_to(message, '❌ Usa el formato correcto en Bolívares:\n`/agregar Harina | 150.0`', parse_mode='Markdown')
 
 
-# --- GESTIÓN DE BOTONES (CARRITO Y RECIBO) ---
+# --- GESTIÓN DE BOTONES (CARRITO Y RECIBO EN TEXTO) ---
 @bot.callback_query_handler(func=lambda call: True)
 def manejar_botones(call):
   chat_id = str(call.message.chat.id)
@@ -388,7 +311,7 @@ def manejar_botones(call):
     
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
-        types.InlineKeyboardButton('✅ Confirmar Pedido y Generar Recibo', callback_data='confirmar_pedido'),
+        types.InlineKeyboardButton('✅ Confirmar Pedido', callback_data='confirmar_pedido'),
         types.InlineKeyboardButton('🗑️ Vaciar Carrito', callback_data='vaciar_carrito'),
         types.InlineKeyboardButton('➕ Agregar más', callback_data='ver_catalogo'),
     )
@@ -409,32 +332,53 @@ def manejar_botones(call):
     clientes = cargar_datos(CLIENTES_FILE, {})
     nombre_cliente = clientes.get(chat_id, {}).get('nombre', 'Cliente')
 
-    imagen_bio, total_dolares, total_bolivares = generar_imagen_recibo(nombre_cliente, carrito, productos, tasa_bcv)
+    conteo = {}
+    for prod_id in carrito:
+      conteo[prod_id] = conteo.get(prod_id, 0) + 1
+
+    detalle = ''
+    total_dolares = 0.0
+    for prod_id, cant in conteo.items():
+      if prod_id in productos:
+        nom = productos[prod_id]['nombre']
+        sub_d = productos[prod_id]['precio'] * cant
+        sub_b = sub_d * tasa_bcv
+        total_dolares += sub_d
+        detalle += f'- {cant}x {nom} (${sub_d:.2f} / {sub_b:,.2f} Bs)\n'
+
+    total_bolivares = total_dolares * tasa_bcv
 
     if chat_id in clientes:
       clientes[chat_id]['deuda_total'] += total_dolares
       guardar_datos(CLIENTES_FILE, clientes)
 
-    bot.send_message(chat_id, '🎉 **¡Pedido confirmado con éxito!** Aquí tienes el comprobante de tu compra:')
-    bot.send_photo(chat_id, imagen_bio, caption=f"💵 Total: **${total_dolares:.2f} USD** / **{total_bolivares:,.2f} Bs**")
+    # Mensaje de recibo detallado por texto para el cliente
+    recibo_texto = (
+        '🎉 **¡PEDIDO CONFIRMADO CON ÉXITO!** 🎉\n\n'
+        f'👤 Cliente: {nombre_cliente}\n'
+        f'💱 Tasa BCV aplicada: {tasa_bcv} Bs/$\n\n'
+        f'📦 **Detalle:**\n{detalle}\n'
+        f'💵 **Total a Pagar:**\n'
+        f'• **${total_dolares:.2f} USD**\n'
+        f'• **{total_bolivares:,.2f} Bs**\n\n'
+        'Se ha sumado a tu cuenta. ¡Gracias por tu compra!'
+    )
+    bot.edit_message_text(recibo_texto, chat_id, call.message.message_id, parse_mode='Markdown')
 
+    # Notificación al administrador
     for admin_id_num in ADMINS_AUTORIZADOS.keys():
       deuda_cli_d = clientes.get(chat_id, {}).get('deuda_total', 0.0)
       deuda_cli_b = deuda_cli_d * tasa_bcv
-      imagen_bio.seek(0)
       
+      alerta = (
+          '🚨 **¡NUEVO PEDIDO DE TIENDA!** 🚨\n\n'
+          f'👤 Cliente: **{nombre_cliente}**\nID: `{chat_id}`\n\n'
+          f'{detalle}\n'
+          f'💰 **Orden:** ${total_dolares:.2f} USD *({total_bolivares:,.2f} Bs)*\n'
+          f'📂 **Deuda Total Acumulada:** ${deuda_cli_d:.2f} *({deuda_cli_b:,.2f} Bs)*'
+      )
       try:
-        bot.send_photo(
-            admin_id_num,
-            imagen_bio,
-            caption=(
-                '🚨 **¡NUEVO PEDIDO RECIBIDO!** 🚨\n\n'
-                f'👤 Cliente: **{nombre_cliente}**\nID: `{chat_id}`\n\n'
-                f'💰 **Orden:** ${total_dolares:.2f} USD *({total_bolivares:,.2f} Bs)*\n'
-                f'📂 **Deuda Total Acumulada:** ${deuda_cli_d:.2f} *({deuda_cli_b:,.2f} Bs)*'
-            ),
-            parse_mode='Markdown'
-        )
+        bot.send_message(admin_id_num, alerta, parse_mode='Markdown')
       except Exception as e:
         print(f'Error al notificar admin {admin_id_num}: {e}')
 

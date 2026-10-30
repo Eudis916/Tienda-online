@@ -12,7 +12,7 @@ app = Flask(__name__)
 
 # --- CONFIGURACIÓN DE ADMINISTRADORES ---
 ADMINS_AUTORIZADOS = {
-    6374498816: {"nombre": "Eudis", "clave": "2010"}
+    6374498816: {"nombre": "Eudis", "clave": "1234"}
 }
 
 # Archivos locales para guardar datos de forma persistente
@@ -31,15 +31,23 @@ def guardar_datos(archivo, datos):
 
 sesiones_usuarios = {}
 
-# --- FUNCIÓN PARA CONSULTAR LA TASA EN LÍNEA ---
+# --- FUNCIÓN CON TASA EN LÍNEA Y RESPALDO SEGURO (OPCIÓN 1 + 2) ---
 def obtener_tasa_bcv():
   try:
-    respuesta = requests.get("https://pydolarve.org/api/v1/dollar?monitor=bcv", timeout=5)
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    respuesta = requests.get("https://pydolarve.org/api/v1/dollar?monitor=bcv", headers=headers, timeout=5)
     if respuesta.status_code == 200:
       datos = respuesta.json()
-      return float(datos.get("price", 36.5))
+      if "price" in datos:
+        return float(datos["price"])
+      elif "monitors" in datos and "bcv" in datos["monitors"]:
+        return float(datos["monitors"]["bcv"]["price"])
+      elif "data" in datos and "price" in datos["data"]:
+        return float(datos["data"]["price"])
   except Exception as e:
-    print(f"Error al consultar la tasa en línea: {e}")
+    print(f"Aviso: Usando tasa de respaldo por fallo de red: {e}")
+  
+  # 🛡️ Tasa de respaldo fija (puedes actualizar este número si alguna vez lo necesitas)
   return 36.5
 
 # --- TECLADO PRINCIPAL PARA CLIENTES ---
@@ -69,7 +77,7 @@ def mostrar_teclado_admin(chat_id):
 
   bot.send_message(
       chat_id,
-      f'🔓 **Panel Admin Activo**\n💱 Tasa BCV en línea: `{tasa_actual} Bs/$`\n\nUsa `/agregar Nombre | PrecioEnBolivares`:',
+      f'🔓 **Panel Admin Activo**\n💱 Tasa BCV detectada: `{tasa_actual} Bs/$`\n\nUsa `/agregar Nombre | PrecioEnBolivares`:',
       reply_markup=markup,
       parse_mode='Markdown'
   )
@@ -153,7 +161,7 @@ def manejar_textos_generales(message):
       markup.add(types.InlineKeyboardButton(texto_boton, callback_data=f'add_{prod_id}'))
     markup.add(types.InlineKeyboardButton('🛒 Ver Carrito y Total', callback_data='ver_carrito'))
     
-    bot.send_message(message.chat.id, f"📦 **Catálogo Disponible** (Tasa en línea: {tasa_bcv} Bs/$):\nToca un producto para sumarlo:", reply_markup=markup, parse_mode='Markdown')
+    bot.send_message(message.chat.id, f"📦 **Catálogo Disponible** (Tasa: {tasa_bcv} Bs/$):\nToca un producto para sumarlo:", reply_markup=markup, parse_mode='Markdown')
 
   elif texto == '🛒 Ver mi Pedido':
     if chat_id not in sesiones_usuarios or not sesiones_usuarios[chat_id].get('carrito'):
@@ -233,7 +241,7 @@ def admin_agregar_producto(message):
     tasa_bcv = obtener_tasa_bcv()
     precio_bs = float(precio_bs_ingresado.strip())
     
-    # 💱 Convierte automáticamente los bolívares ingresados a dólares para guardarlos
+    # Convierte los bolívares a dólares usando la tasa actual obtenida
     precio_dolares = precio_bs / tasa_bcv
 
     productos = cargar_datos(DATA_FILE, {'producto_1': {'nombre': 'Producto Ejemplo', 'precio': 5.0}})
@@ -242,12 +250,12 @@ def admin_agregar_producto(message):
     productos[p_id] = {'nombre': nombre.strip(), 'precio': round(precio_dolares, 2)}
     guardar_datos(DATA_FILE, productos)
     
-    bot.reply_to(message, f'✅ Producto agregado en Bolívares:\n📦 {nombre.strip()} - {precio_bs:,.2f} Bs (~${precio_dolares:.2f} USD)')
+    bot.reply_to(message, f'✅ Producto agregado (Tasa BCV: {tasa_bcv}):\n📦 {nombre.strip()} - {precio_bs:,.2f} Bs (~${precio_dolares:.2f} USD)')
   except Exception:
     bot.reply_to(message, '❌ Usa el formato correcto en Bolívares:\n`/agregar Harina | 150.0`', parse_mode='Markdown')
 
 
-# --- GESTIÓN DE BOTONES (CARRITO Y RECIBO EN TEXTO) ---
+# --- GESTIÓN DE BOTONES ---
 @bot.callback_query_handler(func=lambda call: True)
 def manejar_botones(call):
   chat_id = str(call.message.chat.id)
@@ -266,7 +274,7 @@ def manejar_botones(call):
       p_b = p_d * tasa_bcv
       markup.add(types.InlineKeyboardButton(f"➕ {info['nombre']} — ${p_d:.2f} ({p_b:,.2f} Bs)", callback_data=f'add_{prod_id}'))
     markup.add(types.InlineKeyboardButton('🛒 Ver Carrito y Total', callback_data='ver_carrito'))
-    bot.edit_message_text(f'📦 **Catálogo Disponible** (Tasa en línea: {tasa_bcv} Bs/$):\nToca un producto para sumarlo:', chat_id, call.message.message_id, reply_markup=markup, parse_mode='Markdown')
+    bot.edit_message_text(f'📦 **Catálogo Disponible** (Tasa BCV: {tasa_bcv} Bs/$):\nToca un producto para sumarlo:', chat_id, call.message.message_id, reply_markup=markup, parse_mode='Markdown')
 
   elif call.data.startswith('add_'):
     prod_id = call.data.split('_', 1)[1]
@@ -295,7 +303,7 @@ def manejar_botones(call):
     for prod_id in carrito:
       conteo[prod_id] = conteo.get(prod_id, 0) + 1
 
-    resumen = f'🛒 **Tu Pedido Actual** (Tasa: {tasa_bcv} Bs/$):\n\n'
+    resumen = f'🛒 **Tu Pedido Actual** (Tasa BCV: {tasa_bcv} Bs/$):\n\n'
     total_dolares = 0.0
     for prod_id, cant in conteo.items():
       if prod_id in productos:
@@ -352,7 +360,6 @@ def manejar_botones(call):
       clientes[chat_id]['deuda_total'] += total_dolares
       guardar_datos(CLIENTES_FILE, clientes)
 
-    # Mensaje de recibo detallado por texto para el cliente
     recibo_texto = (
         '🎉 **¡PEDIDO CONFIRMADO CON ÉXITO!** 🎉\n\n'
         f'👤 Cliente: {nombre_cliente}\n'
@@ -365,7 +372,6 @@ def manejar_botones(call):
     )
     bot.edit_message_text(recibo_texto, chat_id, call.message.message_id, parse_mode='Markdown')
 
-    # Notificación al administrador
     for admin_id_num in ADMINS_AUTORIZADOS.keys():
       deuda_cli_d = clientes.get(chat_id, {}).get('deuda_total', 0.0)
       deuda_cli_b = deuda_cli_d * tasa_bcv

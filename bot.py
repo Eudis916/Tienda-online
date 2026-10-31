@@ -177,8 +177,23 @@ def manejar_textos_generales(message):
       return
     bot.send_message(message.chat.id, 'Revisa tus productos seleccionados abriendo el carrito desde el catálogo.')
 
-  elif texto == '❓ Ayuda / Contacto':
-    bot.send_message(message.chat.id, '📞 Si tienes dudas con tu pedido o pagos, comunícate directamente con el administrador.')
+    elif texto == '❓ Ayuda / Contacto':
+    # Reemplaza 'tucorreo@gmail.com' con tu correo electrónico real
+    correo_admin = "tucorreo@gmail.com"
+    
+    markup = types.InlineKeyboardMarkup()
+    # Creamos un enlace mailto para abrir el correo
+    btn_correo = types.InlineKeyboardButton(
+        '✉️ Enviar correo al Administrador', 
+        url=f'mailto:{correo_admin}?subject=Consulta%20sobre%20la%20tienda'
+    )
+    markup.add(btn_correo)
+    
+    bot.send_message(
+        message.chat.id, 
+        '📞 Si tienes dudas con tu pedido, pagos o necesitas asistencia personalizada, contáctanos directamente:', 
+        reply_markup=markup
+    )
 
   elif texto == '🔑 Panel Admin':
     if user_id not in ADMINS_AUTORIZADOS:

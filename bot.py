@@ -18,7 +18,7 @@ ADMINS_AUTORIZADOS = {
 # Archivos locales para guardar datos de forma persistente
 DATA_FILE = 'productos.json'
 CLIENTES_FILE = 'clientes.json'
-CONFIG_FILE = 'config.json'  # Archivo para guardar la tasa manual de respaldo
+CONFIG_FILE = 'config.json'
 
 def cargar_datos(archivo, defecto):
   if os.path.exists(archivo):
@@ -34,7 +34,6 @@ sesiones_usuarios = {}
 
 # --- FUNCIÓN INTELIGENTE CON TASA EN LÍNEA Y RESPALDO MANUAL ---
 def obtener_tasa_bcv():
-  # 1. Intentar buscar la tasa oficial en línea
   try:
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     respuesta = requests.get("https://pydolarve.org/api/v1/dollar?monitor=bcv", headers=headers, timeout=5)
@@ -47,9 +46,8 @@ def obtener_tasa_bcv():
       elif "data" in datos and "price" in datos["data"]:
         return float(datos["data"]["price"])
   except Exception as e:
-    print(f"Aviso: Fallo de red al buscar tasa en línea: {e}")
+    print(f"Aviso: Usando tasa manual de respaldo por fallo de red: {e}")
   
-  # 2. Si falla el internet, buscar si el administrador fijó una tasa manual de respaldo
   config = cargar_datos(CONFIG_FILE, {"tasa_manual": 36.5})
   return float(config.get("tasa_manual", 36.5))
 
@@ -69,24 +67,28 @@ def mostrar_teclado_principal(chat_id):
       parse_mode='Markdown'
   )
 
-# --- TECLADO DE ADMINISTRADOR ---
+# --- TECLADO DE ADMINISTRADOR Y GUÍA DE COMANDOS ---
 def mostrar_teclado_admin(chat_id):
   tasa_actual = obtener_tasa_bcv()
   markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-  btn_clientes = types.KeyboardButton('👥 Ver Clientes y Deudas')
   btn_listar = types.KeyboardButton('📋 Listar Productos')
+  btn_clientes = types.KeyboardButton('👥 Ver Clientes y Deudas')
+  btn_ayuda_admin = types.KeyboardButton('ℹ️ Ver Comandos Admin')
   btn_salir = types.KeyboardButton('🚪 Salir del Panel Admin')
-  markup.add(btn_clientes, btn_listar, btn_salir)
+  markup.add(btn_listar, btn_clientes, btn_ayuda_admin, btn_salir)
 
-  bot.send_message(
-      chat_id,
-      f'🔓 **Panel Admin Activo**\n💱 Tasa activa en el bot: `{tasa_actual} Bs/$`\n\n'
-      '• `/agregar Nombre | PrecioBs`\n'
-      '• `/listar` (Ver productos)\n'
-      '• `/tasa 45.0` (Fijar tasa manual de emergencia)',
-      reply_markup=markup,
-      parse_mode='Markdown'
+  menu_admin_texto = (
+      f'🔓 **PANEL DE ADMINISTRADOR ACTIVO**\n'
+      f'💱 **Tasa actual en sistema:** `{tasa_actual} Bs/$`\n\n'
+      '📋 **Comandos rápidos disponibles:**\n'
+      '• ➕ `/agregar Nombre | PrecioBs`\n'
+      '• ❌ `/quitar nombre_producto` *(Elimina un producto)*\n'
+      '• 📋 `/listar` *(Muestra todos los productos)*\n'
+      '• 💱 `/tasa 36.5` *(Fija tasa manual de respaldo)*\n'
+      '• 🧹 `/limpiar ID` *(Salda la deuda de un cliente)*'
   )
+
+  bot.send_message(chat_id, menu_admin_texto, reply_markup=markup, parse_mode='Markdown')
 
 # --- COMANDO /START ---
 @bot.message_handler(commands=['start'])
@@ -190,6 +192,21 @@ def manejar_textos_generales(message):
     bot.send_message(message.chat.id, '🔒 Has salido del panel de administrador.')
     mostrar_teclado_principal(message.chat.id)
 
+  elif texto == 'ℹ️ Ver Comandos Admin':
+    if not sesiones_usuarios[chat_id].get('es_admin', False) or user_id not in ADMINS_AUTORIZADOS:
+      return
+    tasa_actual = obtener_tasa_bcv()
+    ayuda_txt = (
+        f'🛠️ **GUÍA DE COMANDOS DE ADMINISTRACIÓN**\n\n'
+        f'💱 Tasa activa: `{tasa_actual} Bs/$`\n\n'
+        '1️⃣ **Agregar producto:** `/agregar Nombre | PrecioBs`\n'
+        '2️⃣ **Quitar producto:** `/quitar nombre_producto`\n'
+        '3️⃣ **Ver lista:** `/listar`\n'
+        '4️⃣ **Fijar tasa manual:** `/tasa 36.5`\n'
+        '5️⃣ **Saldar deuda:** `/limpiar ID_DEL_CLIENTE`'
+    )
+    bot.reply_to(message, ayuda_txt, parse_mode='Markdown')
+
   elif texto == '👥 Ver Clientes y Deudas':
     if not sesiones_usuarios[chat_id].get('es_admin', False) or user_id not in ADMINS_AUTORIZADOS:
       return
@@ -218,7 +235,7 @@ def manejar_textos_generales(message):
     bot.reply_to(message, texto_prod, parse_mode='Markdown')
 
 
-# --- NUEVO COMANDO /LISTAR (DIRECTO POR TEXTO) ---
+# --- COMANDOS ADMINISTRADOR DIRECTOS ---
 @bot.message_handler(commands=['listar'])
 def admin_listar_comando(message):
   if message.from_user.id not in ADMINS_AUTORIZADOS:
@@ -232,8 +249,6 @@ def admin_listar_comando(message):
     texto_prod += f"- `id: {p_id}` -> {info['nombre']} (${p_d:.2f} / {p_b:,.2f} Bs)\n"
   bot.reply_to(message, texto_prod, parse_mode='Markdown')
 
-
-# --- COMANDO NUEVO PARA CAMBIAR LA TASA MANUALMENTE DE EMERGENCIA ---
 @bot.message_handler(commands=['tasa'])
 def admin_cambiar_tasa(message):
   if message.from_user.id not in ADMINS_AUTORIZADOS:
@@ -243,12 +258,26 @@ def admin_cambiar_tasa(message):
     config = cargar_datos(CONFIG_FILE, {"tasa_manual": 36.5})
     config["tasa_manual"] = nueva_tasa
     guardar_datos(CONFIG_FILE, config)
-    bot.reply_to(message, f'✅ **Tasa manual de respaldo actualizada con éxito:** `{nueva_tasa} Bs/$`\nSi el internet falla, el bot usará esta tasa.', parse_mode='Markdown')
+    bot.reply_to(message, f'✅ **Tasa manual fijada con éxito:** `{nueva_tasa} Bs/$`', parse_mode='Markdown')
   except Exception:
-    bot.reply_to(message, '❌ Usa el formato correcto:\n`/tasa 45.5`', parse_mode='Markdown')
+    bot.reply_to(message, '❌ Usa el formato correcto:\n`/tasa 36.5`', parse_mode='Markdown')
 
+@bot.message_handler(commands=['quitar'])
+def admin_quitar_producto(message):
+  if message.from_user.id not in ADMINS_AUTORIZADOS:
+    return
+  try:
+    p_id = message.text.replace('/quitar', '').strip().lower().replace(' ', '_')
+    productos = cargar_datos(DATA_FILE, {})
+    if p_id in productos:
+      eliminado = productos.pop(p_id)
+      guardar_datos(DATA_FILE, productos)
+      bot.reply_to(message, f'🗑️ Producto eliminado con éxito: **{eliminado["nombre"]}**', parse_mode='Markdown')
+    else:
+      bot.reply_to(message, '❌ No se encontró ningún producto con ese nombre o ID. Usa `/listar` para ver los IDs correctos.', parse_mode='Markdown')
+  except Exception:
+    bot.reply_to(message, '❌ Usa el formato correcto:\n`/quitar tomate`', parse_mode='Markdown')
 
-# --- COMANDOS ADMINISTRADOR EXISTENTES ---
 @bot.message_handler(commands=['limpiar'])
 def admin_limpiar_deuda(message):
   if message.from_user.id not in ADMINS_AUTORIZADOS:
@@ -260,7 +289,7 @@ def admin_limpiar_deuda(message):
       clientes[chat_id_cliente]['deuda_total'] = 0.0
       guardar_datos(CLIENTES_FILE, clientes)
       nombre_cli = clientes[chat_id_cliente]['nombre']
-      bot.reply_to(message, f'✅ Deuda saldada para: **{nombre_cli}** (ID: `{chat_id_cliente}`). Saldo en $0.00', parse_mode='Markdown')
+      bot.reply_to(message, f'✅ Deuda saldada para: **{nombre_cli}**', parse_mode='Markdown')
     else:
       bot.reply_to(message, '❌ No se encontró ningún cliente con ese ID.')
   except Exception:
@@ -284,7 +313,7 @@ def admin_agregar_producto(message):
     productos[p_id] = {'nombre': nombre.strip(), 'precio': round(precio_dolares, 2)}
     guardar_datos(DATA_FILE, productos)
     
-    bot.reply_to(message, f'✅ Producto agregado (Tasa aplicada: {tasa_bcv}):\n📦 {nombre.strip()} - {precio_bs:,.2f} Bs (~${precio_dolares:.2f} USD)')
+    bot.reply_to(message, f'✅ Producto agregado (Tasa activa: {tasa_bcv}):\n📦 {nombre.strip()} - {precio_bs:,.2f} Bs (~${precio_dolares:.2f} USD)')
   except Exception:
     bot.reply_to(message, '❌ Usa el formato correcto en Bolívares:\n`/agregar Harina | 150.0`', parse_mode='Markdown')
 

@@ -10,7 +10,7 @@ TOKEN = '9087964567:AAFvgiOhYZeV_5oMjK7FQCtdTnPxQfntHHs'
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
-# --- CONFIGURACIÓN DE ADMINISTRADORES (Clave actualizada a 2010) ---
+# --- CONFIGURACIÓN DE ADMINISTRADORES (Clave 2010) ---
 ADMINS_AUTORIZADOS = {
     6374498816: {"nombre": "Eudis", "clave": "2010"}
 }
@@ -32,7 +32,7 @@ def guardar_datos(archivo, datos):
 
 sesiones_usuarios = {}
 
-# --- FUNCIÓN INTELIGENTE CON TASA EN LÍNEA Y RESPALDO MANUAL ---
+# --- FUNCIÓN INTELIGENTE CON TASA EN LÍNEA Y RESPALDO EN 889.00 ---
 def obtener_tasa_bcv():
   try:
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
@@ -48,8 +48,9 @@ def obtener_tasa_bcv():
   except Exception as e:
     print(f"Aviso: Usando tasa manual de respaldo por fallo de red: {e}")
   
-  config = cargar_datos(CONFIG_FILE, {"tasa_manual": 36.5})
-  return float(config.get("tasa_manual", 36.5))
+  # Si la API falla, usará 889.00 por defecto (o la que hayas fijado con /tasa)
+  config = cargar_datos(CONFIG_FILE, {"tasa_manual": 889.00})
+  return float(config.get("tasa_manual", 889.00))
 
 # --- TECLADO PRINCIPAL PARA CLIENTES ---
 def mostrar_teclado_principal(chat_id):
@@ -84,7 +85,7 @@ def mostrar_teclado_admin(chat_id):
       '• ➕ `/agregar Nombre | PrecioBs`\n'
       '• ❌ `/quitar nombre_producto`\n'
       '• 📋 `/listar` *(Muestra todos los productos)*\n'
-      '• 💱 `/tasa 36.5` *(Fija tasa manual de respaldo)*\n'
+      '• 💱 `/tasa 889.00` *(Fija tasa manual de respaldo)*\n'
       '• 🧹 `/limpiar ID` *(Salda la deuda de un cliente)*'
   )
 
@@ -165,7 +166,7 @@ def manejar_textos_generales(message):
     for prod_id, info in productos.items():
       precio_dolar = info['precio']
       precio_bs = precio_dolar * tasa_bcv
-      texto_boton = f"➕ {info['nombre']} — ${precio_dolar:.2f} ({precio_bs:,.2f} Bs)"
+      texto_boton = f"➕ {info['nombre']} — {precio_bs:,.2f} Bs (${precio_dolar:.2f})"
       markup.add(types.InlineKeyboardButton(texto_boton, callback_data=f'add_{prod_id}'))
     markup.add(types.InlineKeyboardButton('🛒 Ver Carrito y Total', callback_data='ver_carrito'))
     
@@ -214,7 +215,7 @@ def manejar_textos_generales(message):
         '1️⃣ **Agregar producto:** `/agregar Nombre | PrecioBs`\n'
         '2️⃣ **Quitar producto:** `/quitar nombre_producto`\n'
         '3️⃣ **Ver lista:** `/listar`\n'
-        '4️⃣ **Fijar tasa manual:** `/tasa 36.5`\n'
+        '4️⃣ **Fijar tasa manual:** `/tasa 889.00`\n'
         '5️⃣ **Saldar deuda:** `/limpiar ID_DEL_CLIENTE`'
     )
     bot.reply_to(message, ayuda_txt, parse_mode='Markdown')
@@ -231,7 +232,7 @@ def manejar_textos_generales(message):
     for c_id, info in clientes.items():
       deuda_d = info['deuda_total']
       deuda_b = deuda_d * tasa_bcv
-      texto_cli += f"👤 **{info['nombre']}**\n   ID: `{c_id}`\n   💰 Deuda: **${deuda_d:.2f}** *({deuda_b:,.2f} Bs)*\n\n"
+      texto_cli += f"👤 **{info['nombre']}**\n   ID: `{c_id}`\n   💰 Deuda: **{deuda_b:,.2f} Bs** *(${deuda_d:.2f})*\n\n"
     bot.reply_to(message, texto_cli, parse_mode='Markdown')
 
   elif texto == '📋 Listar Productos':
@@ -243,7 +244,7 @@ def manejar_textos_generales(message):
     for p_id, info in productos.items():
       p_d = info['precio']
       p_b = p_d * tasa_bcv
-      texto_prod += f"- `id: {p_id}` -> {info['nombre']} (${p_d:.2f} / {p_b:,.2f} Bs)\n"
+      texto_prod += f"- `id: {p_id}` -> {info['nombre']} ({p_b:,.2f} Bs / ${p_d:.2f})\n"
     bot.reply_to(message, texto_prod, parse_mode='Markdown')
 
 
@@ -258,7 +259,7 @@ def admin_listar_comando(message):
   for p_id, info in productos.items():
     p_d = info['precio']
     p_b = p_d * tasa_bcv
-    texto_prod += f"- `id: {p_id}` -> {info['nombre']} (${p_d:.2f} / {p_b:,.2f} Bs)\n"
+    texto_prod += f"- `id: {p_id}` -> {info['nombre']} ({p_b:,.2f} Bs / ${p_d:.2f})\n"
   bot.reply_to(message, texto_prod, parse_mode='Markdown')
 
 @bot.message_handler(commands=['tasa'])
@@ -267,12 +268,12 @@ def admin_cambiar_tasa(message):
     return
   try:
     nueva_tasa = float(message.text.replace('/tasa', '').strip())
-    config = cargar_datos(CONFIG_FILE, {"tasa_manual": 36.5})
+    config = cargar_datos(CONFIG_FILE, {"tasa_manual": 889.00})
     config["tasa_manual"] = nueva_tasa
     guardar_datos(CONFIG_FILE, config)
     bot.reply_to(message, f'✅ **Tasa manual fijada con éxito:** `{nueva_tasa} Bs/$`', parse_mode='Markdown')
   except Exception:
-    bot.reply_to(message, '❌ Usa el formato correcto:\n`/tasa 36.5`', parse_mode='Markdown')
+    bot.reply_to(message, '❌ Usa el formato correcto:\n`/tasa 889.00`', parse_mode='Markdown')
 
 @bot.message_handler(commands=['quitar'])
 def admin_quitar_producto(message):
@@ -347,7 +348,7 @@ def manejar_botones(call):
     for prod_id, info in productos.items():
       p_d = info['precio']
       p_b = p_d * tasa_bcv
-      markup.add(types.InlineKeyboardButton(f"➕ {info['nombre']} — ${p_d:.2f} ({p_b:,.2f} Bs)", callback_data=f'add_{prod_id}'))
+      markup.add(types.InlineKeyboardButton(f"➕ {info['nombre']} — {p_b:,.2f} Bs (${p_d:.2f})", callback_data=f'add_{prod_id}'))
     markup.add(types.InlineKeyboardButton('🛒 Ver Carrito y Total', callback_data='ver_carrito'))
     bot.edit_message_text(f'📦 **Catálogo Disponible** (Tasa BCV: {tasa_bcv} Bs/$):\nToca un producto para sumarlo:', chat_id, call.message.message_id, reply_markup=markup, parse_mode='Markdown')
 
@@ -362,7 +363,7 @@ def manejar_botones(call):
       for p_id, info in productos.items():
         p_d = info['precio']
         p_b = p_d * tasa_bcv
-        markup.add(types.InlineKeyboardButton(f"➕ {info['nombre']} — ${p_d:.2f} ({p_b:,.2f} Bs)", callback_data=f'add_{p_id}'))
+        markup.add(types.InlineKeyboardButton(f"➕ {info['nombre']} — {p_b:,.2f} Bs (${p_d:.2f})", callback_data=f'add_{p_id}'))
       markup.add(types.InlineKeyboardButton('🛒 Ver Carrito y Total', callback_data='ver_carrito'))
       bot.edit_message_text(f'✅ **{nombre_prod}** agregado.\n¿Deseas algo más?', chat_id, call.message.message_id, reply_markup=markup, parse_mode='Markdown')
 
@@ -387,10 +388,10 @@ def manejar_botones(call):
         sub_d = precio_d * cant
         sub_b = sub_d * tasa_bcv
         total_dolares += sub_d
-        resumen += f'- {cant}x {nom} (${precio_d:.2f} c/u) = **${sub_d:.2f}** *({sub_b:,.2f} Bs)*\n'
+        resumen += f'- {cant}x {nom} ({sub_b:,.2f} Bs / **${sub_d:.2f}**)\n'
 
     total_bolivares = total_dolares * tasa_bcv
-    resumen += f'\n💰 **Total USD: ${total_dolares:.2f}**\n🇻🇪 **Total Bolívares: {total_bolivares:,.2f} Bs**'
+    resumen += f'\n🇻🇪 **Total Bolívares: {total_bolivares:,.2f} Bs**\n💰 **Total USD: ${total_dolares:.2f}**'
     
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
@@ -427,7 +428,7 @@ def manejar_botones(call):
         sub_d = productos[prod_id]['precio'] * cant
         sub_b = sub_d * tasa_bcv
         total_dolares += sub_d
-        detalle += f'- {cant}x {nom} (${sub_d:.2f} / {sub_b:,.2f} Bs)\n'
+        detalle += f'- {cant}x {nom} ({sub_b:,.2f} Bs / ${sub_d:.2f})\n'
 
     total_bolivares = total_dolares * tasa_bcv
 
@@ -441,8 +442,8 @@ def manejar_botones(call):
         f'💱 Tasa BCV aplicada: {tasa_bcv} Bs/$\n\n'
         f'📦 **Detalle:**\n{detalle}\n'
         f'💵 **Total a Pagar:**\n'
-        f'• **${total_dolares:.2f} USD**\n'
-        f'• **{total_bolivares:,.2f} Bs**\n\n'
+        f'• **{total_bolivares:,.2f} Bs**\n'
+        f'• **${total_dolares:.2f} USD**\n\n'
         'Se ha sumado a tu cuenta. ¡Gracias por tu compra!'
     )
     bot.edit_message_text(recibo_texto, chat_id, call.message.message_id, parse_mode='Markdown')
@@ -455,8 +456,8 @@ def manejar_botones(call):
           '🚨 **¡NUEVO PEDIDO DE TIENDA!** 🚨\n\n'
           f'👤 Cliente: **{nombre_cliente}**\nID: `{chat_id}`\n\n'
           f'{detalle}\n'
-          f'💰 **Orden:** ${total_dolares:.2f} USD *({total_bolivares:,.2f} Bs)*\n'
-          f'📂 **Deuda Total Acumulada:** ${deuda_cli_d:.2f} *({deuda_cli_b:,.2f} Bs)*'
+          f'💰 **Orden:** {total_bolivares:,.2f} Bs *(${total_dolares:.2f} USD)*\n'
+          f'📂 **Deuda Total Acumulada:** {deuda_cli_b:,.2f} Bs *(${deuda_cli_d:.2f})*'
       )
       try:
         bot.send_message(admin_id_num, alerta, parse_mode='Markdown')

@@ -48,7 +48,6 @@ def obtener_tasa_bcv():
   except Exception as e:
     print(f"Aviso: Usando tasa manual de respaldo por fallo de red: {e}")
   
-  # Si la API falla, usará 889.00 por defecto (o la que hayas fijado con /tasa)
   config = cargar_datos(CONFIG_FILE, {"tasa_manual": 889.00})
   return float(config.get("tasa_manual", 889.00))
 
@@ -161,12 +160,17 @@ def manejar_textos_generales(message):
   texto = message.text
   if texto == '📚 Ver Catálogo':
     tasa_bcv = obtener_tasa_bcv()
-    productos = cargar_datos(DATA_FILE, {'producto_1': {'nombre': 'Producto Ejemplo', 'precio': 5.0}})
+    productos = cargar_datos(DATA_FILE, {})
+    
+    if not productos:
+      bot.send_message(message.chat.id, '📦 El catálogo está vacío temporalmente. El administrador debe agregar productos.')
+      return
+
     markup = types.InlineKeyboardMarkup(row_width=1)
     for prod_id, info in productos.items():
-      precio_dolar = info['precio']
-      precio_bs = precio_dolar * tasa_bcv
-      texto_boton = f"➕ {info['nombre']} — {precio_bs:,.2f} Bs (${precio_dolar:.2f})"
+      p_b = info.get('precio_bs', 0.0)
+      p_d = p_b / tasa_bcv if tasa_bcv > 0 else 0.0
+      texto_boton = f"➕ {info['nombre']} — {p_b:,.2f} Bs (${p_d:.2f})"
       markup.add(types.InlineKeyboardButton(texto_boton, callback_data=f'add_{prod_id}'))
     markup.add(types.InlineKeyboardButton('🛒 Ver Carrito y Total', callback_data='ver_carrito'))
     
@@ -230,20 +234,23 @@ def manejar_textos_generales(message):
       return
     texto_cli = f'👥 **Lista de Clientes y Deudas** (Tasa: {tasa_bcv} Bs/$):\n\n'
     for c_id, info in clientes.items():
-      deuda_d = info['deuda_total']
-      deuda_b = deuda_d * tasa_bcv
-      texto_cli += f"👤 **{info['nombre']}**\n   ID: `{c_id}`\n   💰 Deuda: **{deuda_b:,.2f} Bs** *(${deuda_d:.2f})*\n\n"
+      deuda_bs = info.get('deuda_total_bs', 0.0)
+      deuda_d = deuda_bs / tasa_bcv if tasa_bcv > 0 else 0.0
+      texto_cli += f"👤 **{info['nombre']}**\n   ID: `{c_id}`\n   💰 Deuda: **{deuda_bs:,.2f} Bs** *(${deuda_d:.2f})*\n\n"
     bot.reply_to(message, texto_cli, parse_mode='Markdown')
 
   elif texto == '📋 Listar Productos':
     if not sesiones_usuarios[chat_id].get('es_admin', False) or user_id not in ADMINS_AUTORIZADOS:
       return
     tasa_bcv = obtener_tasa_bcv()
-    productos = cargar_datos(DATA_FILE, {'producto_1': {'nombre': 'Producto Ejemplo', 'precio': 5.0}})
+    productos = cargar_datos(DATA_FILE, {})
+    if not productos:
+      bot.reply_to(message, 'No hay productos en el catálogo todavía.')
+      return
     texto_prod = f'📋 **Catálogo Interno** (Tasa: {tasa_bcv} Bs/$):\n\n'
     for p_id, info in productos.items():
-      p_d = info['precio']
-      p_b = p_d * tasa_bcv
+      p_b = info.get('precio_bs', 0.0)
+      p_d = p_b / tasa_bcv if tasa_bcv > 0 else 0.0
       texto_prod += f"- `id: {p_id}` -> {info['nombre']} ({p_b:,.2f} Bs / ${p_d:.2f})\n"
     bot.reply_to(message, texto_prod, parse_mode='Markdown')
 
@@ -254,11 +261,14 @@ def admin_listar_comando(message):
   if message.from_user.id not in ADMINS_AUTORIZADOS:
     return
   tasa_bcv = obtener_tasa_bcv()
-  productos = cargar_datos(DATA_FILE, {'producto_1': {'nombre': 'Producto Ejemplo', 'precio': 5.0}})
+  productos = cargar_datos(DATA_FILE, {})
+  if not productos:
+    bot.reply_to(message, 'No hay productos en el catálogo todavía.')
+    return
   texto_prod = f'📋 **Catálogo Interno** (Tasa: {tasa_bcv} Bs/$):\n\n'
   for p_id, info in productos.items():
-    p_d = info['precio']
-    p_b = p_d * tasa_bcv
+    p_b = info.get('precio_bs', 0.0)
+    p_d = p_b / tasa_bcv if tasa_bcv > 0 else 0.0
     texto_prod += f"- `id: {p_id}` -> {info['nombre']} ({p_b:,.2f} Bs / ${p_d:.2f})\n"
   bot.reply_to(message, texto_prod, parse_mode='Markdown')
 
@@ -299,6 +309,7 @@ def admin_limpiar_deuda(message):
     chat_id_cliente = message.text.replace('/limpiar', '').strip()
     clientes = cargar_datos(CLIENTES_FILE, {})
     if chat_id_cliente in clientes:
+      clientes[chat_id_cliente]['deuda_total_bs'] = 0.0
       clientes[chat_id_cliente]['deuda_total'] = 0.0
       guardar_datos(CLIENTES_FILE, clientes)
       nombre_cli = clientes[chat_id_cliente]['nombre']
@@ -316,17 +327,17 @@ def admin_agregar_producto(message):
     texto = message.text.replace('/agregar', '').strip()
     nombre, precio_bs_ingresado = texto.split('|')
     
-    tasa_bcv = obtener_tasa_bcv()
     precio_bs = float(precio_bs_ingresado.strip())
-    precio_dolares = precio_bs / tasa_bcv
+    tasa_bcv = obtener_tasa_bcv()
+    precio_dolares = precio_bs / tasa_bcv if tasa_bcv > 0 else 0.0
 
-    productos = cargar_datos(DATA_FILE, {'producto_1': {'nombre': 'Producto Ejemplo', 'precio': 5.0}})
+    productos = cargar_datos(DATA_FILE, {})
     p_id = nombre.strip().lower().replace(' ', '_')
     
-    productos[p_id] = {'nombre': nombre.strip(), 'precio': round(precio_dolares, 2)}
+    productos[p_id] = {'nombre': nombre.strip(), 'precio_bs': round(precio_bs, 2)}
     guardar_datos(DATA_FILE, productos)
     
-    bot.reply_to(message, f'✅ Producto agregado (Tasa activa: {tasa_bcv}):\n📦 {nombre.strip()} - {precio_bs:,.2f} Bs (~${precio_dolares:.2f} USD)')
+    bot.reply_to(message, f'✅ Producto agregado y guardado permanentemente:\n📦 {nombre.strip()} - {precio_bs:,.2f} Bs (~${precio_dolares:.2f} USD)')
   except Exception:
     bot.reply_to(message, '❌ Usa el formato correcto en Bolívares:\n`/agregar Harina | 150.0`', parse_mode='Markdown')
 
@@ -336,7 +347,7 @@ def admin_agregar_producto(message):
 def manejar_botones(call):
   chat_id = str(call.message.chat.id)
   tasa_bcv = obtener_tasa_bcv()
-  productos = cargar_datos(DATA_FILE, {'producto_1': {'nombre': 'Producto Ejemplo', 'precio': 5.0}})
+  productos = cargar_datos(DATA_FILE, {})
 
   if chat_id not in sesiones_usuarios:
     sesiones_usuarios[chat_id] = {'carrito': []}
@@ -345,9 +356,12 @@ def manejar_botones(call):
 
   if call.data == 'ver_catalogo':
     markup = types.InlineKeyboardMarkup(row_width=1)
+    if not productos:
+      bot.answer_callback_query(call.id, 'El catálogo está vacío.')
+      return
     for prod_id, info in productos.items():
-      p_d = info['precio']
-      p_b = p_d * tasa_bcv
+      p_b = info.get('precio_bs', 0.0)
+      p_d = p_b / tasa_bcv if tasa_bcv > 0 else 0.0
       markup.add(types.InlineKeyboardButton(f"➕ {info['nombre']} — {p_b:,.2f} Bs (${p_d:.2f})", callback_data=f'add_{prod_id}'))
     markup.add(types.InlineKeyboardButton('🛒 Ver Carrito y Total', callback_data='ver_carrito'))
     bot.edit_message_text(f'📦 **Catálogo Disponible** (Tasa BCV: {tasa_bcv} Bs/$):\nToca un producto para sumarlo:', chat_id, call.message.message_id, reply_markup=markup, parse_mode='Markdown')
@@ -361,8 +375,8 @@ def manejar_botones(call):
       
       markup = types.InlineKeyboardMarkup(row_width=1)
       for p_id, info in productos.items():
-        p_d = info['precio']
-        p_b = p_d * tasa_bcv
+        p_b = info.get('precio_bs', 0.0)
+        p_d = p_b / tasa_bcv if tasa_bcv > 0 else 0.0
         markup.add(types.InlineKeyboardButton(f"➕ {info['nombre']} — {p_b:,.2f} Bs (${p_d:.2f})", callback_data=f'add_{p_id}'))
       markup.add(types.InlineKeyboardButton('🛒 Ver Carrito y Total', callback_data='ver_carrito'))
       bot.edit_message_text(f'✅ **{nombre_prod}** agregado.\n¿Deseas algo más?', chat_id, call.message.message_id, reply_markup=markup, parse_mode='Markdown')
@@ -380,18 +394,18 @@ def manejar_botones(call):
       conteo[prod_id] = conteo.get(prod_id, 0) + 1
 
     resumen = f'🛒 **Tu Pedido Actual** (Tasa BCV: {tasa_bcv} Bs/$):\n\n'
-    total_dolares = 0.0
+    total_bs = 0.0
     for prod_id, cant in conteo.items():
       if prod_id in productos:
         nom = productos[prod_id]['nombre']
-        precio_d = productos[prod_id]['precio']
-        sub_d = precio_d * cant
-        sub_b = sub_d * tasa_bcv
-        total_dolares += sub_d
+        p_b = productos[prod_id].get('precio_bs', 0.0)
+        sub_b = p_b * cant
+        sub_d = sub_b / tasa_bcv if tasa_bcv > 0 else 0.0
+        total_bs += sub_b
         resumen += f'- {cant}x {nom} ({sub_b:,.2f} Bs / **${sub_d:.2f}**)\n'
 
-    total_bolivares = total_dolares * tasa_bcv
-    resumen += f'\n🇻🇪 **Total Bolívares: {total_bolivares:,.2f} Bs**\n💰 **Total USD: ${total_dolares:.2f}**'
+    total_dolares = total_bs / tasa_bcv if tasa_bcv > 0 else 0.0
+    resumen += f'\n🇻🇪 **Total Bolívares: {total_bs:,.2f} Bs**\n💰 **Total USD: ${total_dolares:.2f}**'
     
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
@@ -421,19 +435,21 @@ def manejar_botones(call):
       conteo[prod_id] = conteo.get(prod_id, 0) + 1
 
     detalle = ''
-    total_dolares = 0.0
+    total_bs = 0.0
     for prod_id, cant in conteo.items():
       if prod_id in productos:
         nom = productos[prod_id]['nombre']
-        sub_d = productos[prod_id]['precio'] * cant
-        sub_b = sub_d * tasa_bcv
-        total_dolares += sub_d
+        p_b = productos[prod_id].get('precio_bs', 0.0)
+        sub_b = p_b * cant
+        sub_d = sub_b / tasa_bcv if tasa_bcv > 0 else 0.0
+        total_bs += sub_b
         detalle += f'- {cant}x {nom} ({sub_b:,.2f} Bs / ${sub_d:.2f})\n'
 
-    total_bolivares = total_dolares * tasa_bcv
+    total_dolares = total_bs / tasa_bcv if tasa_bcv > 0 else 0.0
 
     if chat_id in clientes:
-      clientes[chat_id]['deuda_total'] += total_dolares
+      clientes[chat_id]['deuda_total_bs'] = clientes[chat_id].get('deuda_total_bs', 0.0) + total_bs
+      clientes[chat_id]['deuda_total'] = clientes[chat_id]['deuda_total_bs'] / tasa_bcv if tasa_bcv > 0 else 0.0
       guardar_datos(CLIENTES_FILE, clientes)
 
     recibo_texto = (
@@ -442,22 +458,22 @@ def manejar_botones(call):
         f'💱 Tasa BCV aplicada: {tasa_bcv} Bs/$\n\n'
         f'📦 **Detalle:**\n{detalle}\n'
         f'💵 **Total a Pagar:**\n'
-        f'• **{total_bolivares:,.2f} Bs**\n'
+        f'• **{total_bs:,.2f} Bs**\n'
         f'• **${total_dolares:.2f} USD**\n\n'
         'Se ha sumado a tu cuenta. ¡Gracias por tu compra!'
     )
-    bot.edit_message_text(recibo_texto, chat_id, call.message.message_id, parse_mode='Markdown')
+    bot.edit_message_text(recibo_texto, chat_id, call.message.message_id, reply_markup=markup, parse_mode='Markdown')
 
     for admin_id_num in ADMINS_AUTORIZADOS.keys():
-      deuda_cli_d = clientes.get(chat_id, {}).get('deuda_total', 0.0)
-      deuda_cli_b = deuda_cli_d * tasa_bcv
+      deuda_cli_bs = clientes.get(chat_id, {}).get('deuda_total_bs', 0.0)
+      deuda_cli_d = deuda_cli_bs / tasa_bcv if tasa_bcv > 0 else 0.0
       
       alerta = (
           '🚨 **¡NUEVO PEDIDO DE TIENDA!** 🚨\n\n'
           f'👤 Cliente: **{nombre_cliente}**\nID: `{chat_id}`\n\n'
           f'{detalle}\n'
-          f'💰 **Orden:** {total_bolivares:,.2f} Bs *(${total_dolares:.2f} USD)*\n'
-          f'📂 **Deuda Total Acumulada:** {deuda_cli_b:,.2f} Bs *(${deuda_cli_d:.2f})*'
+          f'💰 **Orden:** {total_bs:,.2f} Bs *(${total_dolares:.2f} USD)*\n'
+          f'📂 **Deuda Total Acumulada:** {deuda_cli_bs:,.2f} Bs *(${deuda_cli_d:.2f})*'
       )
       try:
         bot.send_message(admin_id_num, alerta, parse_mode='Markdown')

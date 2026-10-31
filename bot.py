@@ -18,6 +18,7 @@ ADMINS_AUTORIZADOS = {
 # Archivos locales para guardar datos de forma persistente
 DATA_FILE = 'productos.json'
 CLIENTES_FILE = 'clientes.json'
+CONFIG_FILE = 'config.json'  # Archivo para guardar la tasa manual de respaldo
 
 def cargar_datos(archivo, defecto):
   if os.path.exists(archivo):
@@ -31,8 +32,9 @@ def guardar_datos(archivo, datos):
 
 sesiones_usuarios = {}
 
-# --- FUNCIÓN CON TASA EN LÍNEA Y RESPALDO SEGURO (OPCIÓN 1 + 2) ---
+# --- FUNCIÓN INTELIGENTE CON TASA EN LÍNEA Y RESPALDO MANUAL ---
 def obtener_tasa_bcv():
+  # 1. Intentar buscar la tasa oficial en línea
   try:
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     respuesta = requests.get("https://pydolarve.org/api/v1/dollar?monitor=bcv", headers=headers, timeout=5)
@@ -45,10 +47,11 @@ def obtener_tasa_bcv():
       elif "data" in datos and "price" in datos["data"]:
         return float(datos["data"]["price"])
   except Exception as e:
-    print(f"Aviso: Usando tasa de respaldo por fallo de red: {e}")
+    print(f"Aviso: Fallo de red al buscar tasa en línea: {e}")
   
-  # 🛡️ Tasa de respaldo fija (puedes actualizar este número si alguna vez lo necesitas)
-  return 885.00
+  # 2. Si falla el internet, buscar si el administrador fijó una tasa manual de respaldo
+  config = cargar_datos(CONFIG_FILE, {"tasa_manual": 36.5})
+  return float(config.get("tasa_manual", 36.5))
 
 # --- TECLADO PRINCIPAL PARA CLIENTES ---
 def mostrar_teclado_principal(chat_id):
@@ -77,7 +80,10 @@ def mostrar_teclado_admin(chat_id):
 
   bot.send_message(
       chat_id,
-      f'🔓 **Panel Admin Activo**\n💱 Tasa BCV detectada: `{tasa_actual} Bs/$`\n\nUsa `/agregar Nombre | PrecioEnBolivares`:',
+      f'🔓 **Panel Admin Activo**\n💱 Tasa activa en el bot: `{tasa_actual} Bs/$`\n\n'
+      '• `/agregar Nombre | PrecioBs`\n'
+      '• `/listar` (Ver productos)\n'
+      '• `/tasa 45.0` (Fijar tasa manual de emergencia)',
       reply_markup=markup,
       parse_mode='Markdown'
   )
@@ -212,7 +218,37 @@ def manejar_textos_generales(message):
     bot.reply_to(message, texto_prod, parse_mode='Markdown')
 
 
-# --- COMANDOS ADMINISTRADOR ---
+# --- NUEVO COMANDO /LISTAR (DIRECTO POR TEXTO) ---
+@bot.message_handler(commands=['listar'])
+def admin_listar_comando(message):
+  if message.from_user.id not in ADMINS_AUTORIZADOS:
+    return
+  tasa_bcv = obtener_tasa_bcv()
+  productos = cargar_datos(DATA_FILE, {'producto_1': {'nombre': 'Producto Ejemplo', 'precio': 5.0}})
+  texto_prod = f'📋 **Catálogo Interno** (Tasa: {tasa_bcv} Bs/$):\n\n'
+  for p_id, info in productos.items():
+    p_d = info['precio']
+    p_b = p_d * tasa_bcv
+    texto_prod += f"- `id: {p_id}` -> {info['nombre']} (${p_d:.2f} / {p_b:,.2f} Bs)\n"
+  bot.reply_to(message, texto_prod, parse_mode='Markdown')
+
+
+# --- COMANDO NUEVO PARA CAMBIAR LA TASA MANUALMENTE DE EMERGENCIA ---
+@bot.message_handler(commands=['tasa'])
+def admin_cambiar_tasa(message):
+  if message.from_user.id not in ADMINS_AUTORIZADOS:
+    return
+  try:
+    nueva_tasa = float(message.text.replace('/tasa', '').strip())
+    config = cargar_datos(CONFIG_FILE, {"tasa_manual": 36.5})
+    config["tasa_manual"] = nueva_tasa
+    guardar_datos(CONFIG_FILE, config)
+    bot.reply_to(message, f'✅ **Tasa manual de respaldo actualizada con éxito:** `{nueva_tasa} Bs/$`\nSi el internet falla, el bot usará esta tasa.', parse_mode='Markdown')
+  except Exception:
+    bot.reply_to(message, '❌ Usa el formato correcto:\n`/tasa 45.5`', parse_mode='Markdown')
+
+
+# --- COMANDOS ADMINISTRADOR EXISTENTES ---
 @bot.message_handler(commands=['limpiar'])
 def admin_limpiar_deuda(message):
   if message.from_user.id not in ADMINS_AUTORIZADOS:
@@ -240,8 +276,6 @@ def admin_agregar_producto(message):
     
     tasa_bcv = obtener_tasa_bcv()
     precio_bs = float(precio_bs_ingresado.strip())
-    
-    # Convierte los bolívares a dólares usando la tasa actual obtenida
     precio_dolares = precio_bs / tasa_bcv
 
     productos = cargar_datos(DATA_FILE, {'producto_1': {'nombre': 'Producto Ejemplo', 'precio': 5.0}})
@@ -250,7 +284,7 @@ def admin_agregar_producto(message):
     productos[p_id] = {'nombre': nombre.strip(), 'precio': round(precio_dolares, 2)}
     guardar_datos(DATA_FILE, productos)
     
-    bot.reply_to(message, f'✅ Producto agregado (Tasa BCV: {tasa_bcv}):\n📦 {nombre.strip()} - {precio_bs:,.2f} Bs (~${precio_dolares:.2f} USD)')
+    bot.reply_to(message, f'✅ Producto agregado (Tasa aplicada: {tasa_bcv}):\n📦 {nombre.strip()} - {precio_bs:,.2f} Bs (~${precio_dolares:.2f} USD)')
   except Exception:
     bot.reply_to(message, '❌ Usa el formato correcto en Bolívares:\n`/agregar Harina | 150.0`', parse_mode='Markdown')
 

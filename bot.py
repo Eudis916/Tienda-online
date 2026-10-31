@@ -133,7 +133,7 @@ def manejar_textos_generales(message):
     clientes[chat_id] = {
         'nombre': nombre_ingresado,
         'username': message.from_user.username or 'Sin alias',
-        'deuda_total': 0.0,
+        'deuda_total_bs': 0.0,
         'historial_compras': [],
     }
     guardar_datos(CLIENTES_FILE, clientes)
@@ -191,11 +191,14 @@ def manejar_textos_generales(message):
     )
     markup.add(btn_correo)
     
-    bot.send_message(
-        message.chat.id, 
-        '📞 Si tienes dudas con tu pedido, pagos o necesitas asistencia, contáctanos directamente:', 
-        reply_markup=markup
+    # Mensaje claro con el correo visible en el texto y el botón interactivo
+    mensaje_ayuda = (
+        '📞 **¿Tienes dudas con tu pedido o pagos?**\n\n'
+        'Puedes escribirnos directamente a nuestro correo electrónico:\n'
+        f'📧 `{correo_admin}`\n\n'
+        'O presiona el botón de abajo para redactar tu mensaje:'
     )
+    bot.send_message(message.chat.id, mensaje_ayuda, reply_markup=markup, parse_mode='Markdown')
 
   elif texto == '🔑 Panel Admin':
     if user_id not in ADMINS_AUTORIZADOS:
@@ -310,7 +313,6 @@ def admin_limpiar_deuda(message):
     clientes = cargar_datos(CLIENTES_FILE, {})
     if chat_id_cliente in clientes:
       clientes[chat_id_cliente]['deuda_total_bs'] = 0.0
-      clientes[chat_id_cliente]['deuda_total'] = 0.0
       guardar_datos(CLIENTES_FILE, clientes)
       nombre_cli = clientes[chat_id_cliente]['nombre']
       bot.reply_to(message, f'✅ Deuda saldada para: **{nombre_cli}**', parse_mode='Markdown')
@@ -428,7 +430,15 @@ def manejar_botones(call):
       return
 
     clientes = cargar_datos(CLIENTES_FILE, {})
-    nombre_cliente = clientes.get(chat_id, {}).get('nombre', 'Cliente')
+    if chat_id not in clientes:
+      clientes[chat_id] = {
+          'nombre': sesiones_usuarios[chat_id].get('nombre', 'Cliente'),
+          'username': call.from_user.username or 'Sin alias',
+          'deuda_total_bs': 0.0,
+          'historial_compras': []
+      }
+
+    nombre_cliente = clientes[chat_id]['nombre']
 
     conteo = {}
     for prod_id in carrito:
@@ -447,10 +457,8 @@ def manejar_botones(call):
 
     total_dolares = total_bs / tasa_bcv if tasa_bcv > 0 else 0.0
 
-    if chat_id in clientes:
-      clientes[chat_id]['deuda_total_bs'] = clientes[chat_id].get('deuda_total_bs', 0.0) + total_bs
-      clientes[chat_id]['deuda_total'] = clientes[chat_id]['deuda_total_bs'] / tasa_bcv if tasa_bcv > 0 else 0.0
-      guardar_datos(CLIENTES_FILE, clientes)
+    clientes[chat_id]['deuda_total_bs'] = clientes[chat_id].get('deuda_total_bs', 0.0) + total_bs
+    guardar_datos(CLIENTES_FILE, clientes)
 
     recibo_texto = (
         '🎉 **¡PEDIDO CONFIRMADO CON ÉXITO!** 🎉\n\n'
@@ -462,7 +470,7 @@ def manejar_botones(call):
         f'• **${total_dolares:.2f} USD**\n\n'
         'Se ha sumado a tu cuenta. ¡Gracias por tu compra!'
     )
-    bot.edit_message_text(recibo_texto, chat_id, call.message.message_id, reply_markup=markup, parse_mode='Markdown')
+    bot.edit_message_text(recibo_texto, chat_id, call.message.message_id, parse_mode='Markdown')
 
     for admin_id_num in ADMINS_AUTORIZADOS.keys():
       deuda_cli_bs = clientes.get(chat_id, {}).get('deuda_total_bs', 0.0)

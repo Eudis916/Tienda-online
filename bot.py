@@ -10,7 +10,7 @@ TOKEN = '9087964567:AAFvgiOhYZeV_5oMjK7FQCtdTnPxQfntHHs'
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
-# --- CONFIGURACIÓN DE ADMINISTRADORES ---
+# --- CONFIGURACIÓN DE ADMINISTRADORES (Clave actualizada a 2010) ---
 ADMINS_AUTORIZADOS = {
     6374498816: {"nombre": "Eudis", "clave": "2010"}
 }
@@ -178,11 +178,10 @@ def manejar_textos_generales(message):
     bot.send_message(message.chat.id, 'Revisa tus productos seleccionados abriendo el carrito desde el catálogo.')
 
   elif texto == '❓ Ayuda / Contacto':
-    # ✉️ Cambia 'tucorreo@gmail.com' por tu correo electrónico real
     correo_admin = "zmoises916@gmail.com"
     markup = types.InlineKeyboardMarkup()
     btn_correo = types.InlineKeyboardButton(
-        '✉️ Enviar correo al Administrador zmoises916@gmail.com', 
+        '✉️ Enviar correo al Administrador', 
         url=f'mailto:{correo_admin}?subject=Consulta%20sobre%20la%20tienda'
     )
     markup.add(btn_correo)
@@ -410,3 +409,76 @@ def manejar_botones(call):
   elif call.data == 'confirmar_pedido':
     carrito = sesiones_usuarios[chat_id]['carrito']
     if not carrito:
+      bot.answer_callback_query(call.id, 'El carrito está vacío.')
+      return
+
+    clientes = cargar_datos(CLIENTES_FILE, {})
+    nombre_cliente = clientes.get(chat_id, {}).get('nombre', 'Cliente')
+
+    conteo = {}
+    for prod_id in carrito:
+      conteo[prod_id] = conteo.get(prod_id, 0) + 1
+
+    detalle = ''
+    total_dolares = 0.0
+    for prod_id, cant in conteo.items():
+      if prod_id in productos:
+        nom = productos[prod_id]['nombre']
+        sub_d = productos[prod_id]['precio'] * cant
+        sub_b = sub_d * tasa_bcv
+        total_dolares += sub_d
+        detalle += f'- {cant}x {nom} (${sub_d:.2f} / {sub_b:,.2f} Bs)\n'
+
+    total_bolivares = total_dolares * tasa_bcv
+
+    if chat_id in clientes:
+      clientes[chat_id]['deuda_total'] += total_dolares
+      guardar_datos(CLIENTES_FILE, clientes)
+
+    recibo_texto = (
+        '🎉 **¡PEDIDO CONFIRMADO CON ÉXITO!** 🎉\n\n'
+        f'👤 Cliente: {nombre_cliente}\n'
+        f'💱 Tasa BCV aplicada: {tasa_bcv} Bs/$\n\n'
+        f'📦 **Detalle:**\n{detalle}\n'
+        f'💵 **Total a Pagar:**\n'
+        f'• **${total_dolares:.2f} USD**\n'
+        f'• **{total_bolivares:,.2f} Bs**\n\n'
+        'Se ha sumado a tu cuenta. ¡Gracias por tu compra!'
+    )
+    bot.edit_message_text(recibo_texto, chat_id, call.message.message_id, parse_mode='Markdown')
+
+    for admin_id_num in ADMINS_AUTORIZADOS.keys():
+      deuda_cli_d = clientes.get(chat_id, {}).get('deuda_total', 0.0)
+      deuda_cli_b = deuda_cli_d * tasa_bcv
+      
+      alerta = (
+          '🚨 **¡NUEVO PEDIDO DE TIENDA!** 🚨\n\n'
+          f'👤 Cliente: **{nombre_cliente}**\nID: `{chat_id}`\n\n'
+          f'{detalle}\n'
+          f'💰 **Orden:** ${total_dolares:.2f} USD *({total_bolivares:,.2f} Bs)*\n'
+          f'📂 **Deuda Total Acumulada:** ${deuda_cli_d:.2f} *({deuda_cli_b:,.2f} Bs)*'
+      )
+      try:
+        bot.send_message(admin_id_num, alerta, parse_mode='Markdown')
+      except Exception as e:
+        print(f'Error al notificar admin {admin_id_num}: {e}')
+
+    sesiones_usuarios[chat_id]['carrito'] = []
+
+
+# --- CONFIGURACIÓN WEBHOOK FLASK ---
+@app.route(f'/{TOKEN}', methods=['POST'])
+def webhook():
+  json_str = request.get_data().decode('UTF-8')
+  update = telebot.types.Update.de_json(json_str)
+  bot.process_new_updates([update])
+  return '!', 200
+
+@app.route('/')
+def index():
+  return 'Bot de Tienda y Deudas Independiente Activo', 200
+
+if __name__ == '__main__':
+  bot.remove_webhook()
+  bot.set_webhook(url=f'https://tienda-online-2kqw.onrender.com/{TOKEN}')
+  app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))

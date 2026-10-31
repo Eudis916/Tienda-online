@@ -179,10 +179,10 @@ def manejar_textos_generales(message):
 
   elif texto == '❓ Ayuda / Contacto':
     # ✉️ Cambia 'tucorreo@gmail.com' por tu correo electrónico real
-    correo_admin = "tucorreo@gmail.com"
+    correo_admin = "zmoises916@gmail.com"
     markup = types.InlineKeyboardMarkup()
     btn_correo = types.InlineKeyboardButton(
-        '✉️ Enviar correo al Administrador', 
+        '✉️ Enviar correo al Administrador zmoises916@gmail.com', 
         url=f'mailto:{correo_admin}?subject=Consulta%20sobre%20la%20tienda'
     )
     markup.add(btn_correo)

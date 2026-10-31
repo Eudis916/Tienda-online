@@ -12,7 +12,7 @@ app = Flask(__name__)
 
 # --- CONFIGURACIÓN DE ADMINISTRADORES ---
 ADMINS_AUTORIZADOS = {
-    6374498816: {"nombre": "Eudis", "clave": "1234"}
+    6374498816: {"nombre": "Eudis", "clave": "2010"}
 }
 
 # Archivos locales para guardar datos de forma persistente
